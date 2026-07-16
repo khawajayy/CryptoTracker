@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CryptoLedger — Portfolio & Trade Tracker</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#121826; --panel2:#0f1420; --border:#212a3b;
+    --text:#e6ecf5; --muted:#8a97ad; --accent:#4f8cff; --accent2:#7c5cff;
+    --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --chip:#1b2334;
+    --shadow:0 10px 30px rgba(0,0,0,.35);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(1200px 600px at 80% -10%, #16203a 0%, transparent 60%),
+               radial-gradient(900px 500px at -10% 10%, #1a1330 0%, transparent 55%), var(--bg);
+    color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    min-height:100vh;
+  }
+  a{color:var(--accent);text-decoration:none}
+  button{font:inherit;cursor:pointer}
+  input,select{font:inherit}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 18px 60px}
+  header.app{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;letter-spacing:.2px}
+  .logo .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:var(--shadow)}
+  .spacer{flex:1}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{
+    background:var(--chip);color:var(--text);border:1px solid var(--border);
+    padding:9px 14px;border-radius:10px;font-weight:600;transition:.15s;display:inline-flex;gap:8px;align-items:center
+  }
+  .btn:hover{border-color:#33415c;transform:translateY(-1px)}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff}
+  .btn.ghost{background:transparent}
+  .btn.danger{color:#fff;background:linear-gradient(135deg,#ef4444,#b91c1c);border:none}
+  .btn.sm{padding:6px 10px;font-size:12.5px;border-radius:8px}
+  .muted{color:var(--muted)}
+  .tabs{display:flex;gap:6px;background:var(--panel2);border:1px solid var(--border);padding:5px;border-radius:12px;width:max-content;margin-bottom:18px;flex-wrap:wrap}
+  .tab{padding:8px 16px;border-radius:9px;color:var(--muted);font-weight:600}
+  .tab.active{background:var(--chip);color:var(--text)}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px 14px;box-shadow:var(--shadow)}
+  .card .label{color:var(--muted);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+  .card .value{font-size:24px;font-weight:800;margin-top:6px;letter-spacing:.2px}
+  .card .sub{font-size:12.5px;margin-top:4px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .neu{color:var(--muted)}
+  .hero{grid-column:1/-1;display:flex;gap:22px;align-items:flex-end;flex-wrap:wrap}
+  .hero .big{font-size:40px;font-weight:900;line-height:1}
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .panel h2{margin:0;padding:16px 18px;font-size:15px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .panel h2 .spacer{flex:1}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:11px 14px;text-align:right;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  thead th{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);font-weight:700}
+  tbody tr{border-bottom:1px solid rgba(33,42,59,.6)}
+  tbody tr:last-child{border-bottom:none}
+  tbody tr:hover{background:rgba(79,140,255,.05)}
+  .sym{display:flex;align-items:center;gap:10px}
+  .sym .badge{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-weight:800;font-size:12px;background:var(--chip);border:1px solid var(--border);overflow:hidden}
+  .sym .badge img{width:100%;height:100%;object-fit:cover}
+  .sym .meta small{color:var(--muted);display:block;font-weight:500}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .tag.crypto{color:#f7a600;border-color:#5a4410;background:rgba(247,166,0,.08)}
+  .tag.stock{color:#4f8cff;border-color:#22406e;background:rgba(79,140,255,.08)}
+  .tag.DEPOSIT{color:var(--green)} .tag.WITHDRAW{color:var(--amber)} .tag.BUY{color:var(--accent)} .tag.SELL{color:var(--accent2)}
+  .empty{padding:44px 18px;text-align:center;color:var(--muted)}
+  .empty .em{font-size:34px;margin-bottom:8px}
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(4,7,12,.6);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
+  .overlay.open{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:16px;width:100%;max-width:520px;box-shadow:var(--shadow)}
+  .modal header{display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--border)}
+  .modal header h3{margin:0;font-size:16px}
+  .modal .body{padding:18px}
+  .modal .foot{padding:14px 18px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:12.5px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .field input,.field select{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:10px}
+  .field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .seg{display:flex;gap:6px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:5px}
+  .seg button{flex:1;background:transparent;border:none;color:var(--muted);padding:8px;border-radius:7px;font-weight:700}
+  .seg button.active{background:var(--chip);color:var(--text)}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .calc{background:var(--panel2);border:1px dashed var(--border);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:6px}
+  .search-results{border:1px solid var(--border);border-radius:10px;margin-top:6px;max-height:190px;overflow:auto;display:none}
+  .search-results.open{display:block}
+  .sr-item{padding:9px 12px;display:flex;gap:10px;align-items:center;cursor:pointer;border-bottom:1px solid rgba(33,42,59,.6)}
+  .sr-item:hover{background:rgba(79,140,255,.08)}
+  .sr-item img{width:22px;height:22px;border-radius:5px}
+  .iconbtn{background:transparent;border:none;color:var(--muted);padding:4px 7px;border-radius:7px;font-size:14px}
+  .iconbtn:hover{background:var(--chip);color:var(--text)}
+  .price-fresh{font-size:11px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--chip);border:1px solid var(--border);color:var(--text);padding:11px 18px;border-radius:10px;box-shadow:var(--shadow);z-index:80;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1;transform:translate(-50%,-6px)}
+  .toast.err{border-color:#7f1d1d}
+  .bar{height:6px;background:var(--chip);border-radius:999px;overflow:hidden;margin-top:6px}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .flex{display:flex;align-items:center;gap:10px}
+  .warn{background:rgba(245,158,11,.1);border:1px solid #5a4410;color:#f5c451;padding:10px 12px;border-radius:10px;font-size:13px;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="app">
+    <div class="logo"><span class="dot"></span> CryptoLedger</div>
+    <span class="tag" id="apiStatus">prices: idle</span>
+    <div class="spacer"></div>
+    <div class="toolbar">
+      <button class="btn" id="refreshBtn">↻ Refresh prices</button>
+      <button class="btn primary" id="addBtn">+ Add transaction</button>
+    </div>
+  </header>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-view="dashboard">Dashboard</div>
+    <div class="tab" data-view="holdings">Holdings</div>
+    <div class="tab" data-view="ledger">Ledger</div>
+    <div class="tab" data-view="settings">Settings</div>
+  </div>
+
+  <div id="view"></div>
+</div>
+
+<!-- Transaction modal -->
+<div class="overlay" id="txOverlay">
+  <div class="modal">
+    <header><h3 id="txTitle">Add transaction</h3><div class="spacer" style="flex:1"></div>
+      <button class="iconbtn" id="txClose">✕</button></header>
+    <div class="body">
+      <div class="seg" id="txTypeSeg">
+        <button data-type="DEPOSIT" class="active">Deposit</button>
+        <button data-type="WITHDRAW">Withdraw</button>
+        <button data-type="BUY">Buy</button>
+        <button data-type="SELL">Sell</button>
+      </div>
+
+      <!-- cash fields -->
+      <div id="cashFields" style="margin-top:14px">
+        <div class="field">
+          <label>Amount (USD)</label>
+          <input type="number" id="cashAmount" placeholder="3000" step="any" min="0" />
+        </div>
+      </div>
+
+      <!-- trade fields -->
+      <div id="tradeFields" style="display:none;margin-top:14px">
+        <div class="field" id="assetTypeField">
+          <label>Asset type</label>
+          <div class="seg" id="assetTypeSeg">
+            <button data-atype="crypto" class="active">Crypto</button>
+            <button data-atype="stock">Stock</button>
+          </div>
+        </div>
+        <div class="field">
+          <label id="assetLabel">Asset (search or type symbol)</label>
+          <input type="text" id="assetSearch" placeholder="e.g. bitcoin, INTC, sandisk" autocomplete="off" />
+          <div class="search-results" id="searchResults"></div>
+          <div class="hint" id="assetPicked"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Quantity</label><input type="number" id="qty" step="any" min="0" placeholder="20" /></div>
+          <div class="field"><label>Price per unit (USD)</label><input type="number" id="price" step="any" min="0" placeholder="150" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Fee (USD, optional)</label><input type="number" id="fee" step="any" min="0" placeholder="0" /></div>
+          <div class="field"><label>&nbsp;</label><button class="btn sm" id="useLive" type="button" style="width:100%">Use live price</button></div>
+        </div>
+        <div class="calc" id="tradeCalc">—</div>
+        <div id="tradeWarn"></div>
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <label>Date</label>
+        <input type="datetime-local" id="txDate" />
+      </div>
+      <div class="field">
+        <label>Note (optional)</label>
+        <input type="text" id="txNote" placeholder="" />
+      </div>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" id="txCancel">Cancel</button>
+      <button class="btn primary" id="txSave">Save transaction</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* =========================================================================
+   CryptoLedger — a personal crypto + stocks trade ledger.
+   Single-file, no build step, data in localStorage.
+   Accounting: cash-balance model with average-cost basis.
+     Net Capital = deposits - withdrawals          (your original-capital anchor)
+     Equity      = cash + market value of holdings  (holdings priced live)
+     Total Return= Equity - Net Capital             (P&L vs original capital)
+   ========================================================================= */
+
+const LS_KEY = "cryptoledger.v1";
+const fmtUSD = (n) => (n<0?"-$":"$") + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtNum = (n,d=6) => Number(n).toLocaleString(undefined,{maximumFractionDigits:d});
+const fmtPct = (n) => (n>=0?"+":"") + n.toFixed(2) + "%";
+const uid = () => Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4);
+const cls = (n) => n>0?"pos":(n<0?"neg":"neu");
+const sign = (n) => (n>=0?"+":"") ;
+
+/* ---------- state ---------- */
+let state = load();
+
+function defaultState(){
+  return {
+    transactions: [],                 // {id,type,date,note, ... }
+    assets: {},                       // assetId -> {id,type,symbol,name,coingeckoId,img}
+    prices: {},                       // assetId -> {price,updatedAt}
+    settings: { finnhubKey:"", autoRefreshSec:0 },
+    ui: { view:"dashboard" }
+  };
+}
+function load(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return defaultState();
+    const s = JSON.parse(raw);
+    return Object.assign(defaultState(), s, {ui: Object.assign({view:"dashboard"}, s.ui||{})});
+  }catch(e){ return defaultState(); }
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+
+/* ---------- accounting engine ---------- */
+// Replays the whole ledger in chronological order and returns derived figures.
+function computePortfolio(){
+  const txns = [...state.transactions].sort((a,b)=>{
+    const d = new Date(a.date) - new Date(b.date);
+    return d !== 0 ? d : (a._seq||0) - (b._seq||0);
+  });
+  let cash=0, deposits=0, withdrawals=0, realized=0, feesPaid=0;
+  const pos = {}; // assetId -> {qty, costBasis}
+  const trades = [];
+
+  for(const t of txns){
+    if(t.type==="DEPOSIT"){ cash += t.amount; deposits += t.amount; }
+    else if(t.type==="WITHDRAW"){ cash -= t.amount; withdrawals += t.amount; }
+    else if(t.type==="BUY"){
+      const gross = t.qty*t.price, fee = t.fee||0;
+      cash -= (gross + fee); feesPaid += fee;
+      const p = pos[t.assetId] || (pos[t.assetId]={qty:0,costBasis:0});
+      p.qty += t.qty; p.costBasis += gross + fee;   // fee capitalized into basis
+    }
+    else if(t.type==="SELL"){
+      const gross = t.qty*t.price, fee = t.fee||0;
+      cash += (gross - fee); feesPaid += fee;
+      const p = pos[t.assetId] || (pos[t.assetId]={qty:0,costBasis:0});
+      const avg = p.qty>0 ? p.costBasis/p.qty : 0;
+      const basisSold = avg * t.qty;
+      realized += (gross - fee) - basisSold;
+      p.qty -= t.qty; p.costBasis -= basisSold;
+      if(p.qty < 1e-9){ p.qty=0; p.costBasis=0; }
+    }
+  }
+
+  // build holdings with live prices
+  let holdingsValue=0, holdingsCost=0, unrealized=0;
+  const holdings=[];
+  for(const [assetId,p] of Object.entries(pos)){
+    if(p.qty<=1e-9) continue;
+    const asset = state.assets[assetId] || {symbol:assetId,type:"?"};
+    const pr = state.prices[assetId];
+    const live = pr ? pr.price : null;
+    const avg = p.costBasis/p.qty;
+    const mkt = live!=null ? live*p.qty : null;
+    const uPnl = mkt!=null ? mkt - p.costBasis : null;
+    holdingsValue += mkt!=null ? mkt : p.costBasis;   // fall back to cost if no price
+    holdingsCost  += p.costBasis;
+    if(uPnl!=null) unrealized += uPnl;
+    holdings.push({assetId,asset,qty:p.qty,avgCost:avg,costBasis:p.costBasis,live,marketValue:mkt,unrealized:uPnl,updatedAt:pr?pr.updatedAt:null});
+  }
+  holdings.sort((a,b)=> (b.marketValue||b.costBasis) - (a.marketValue||a.costBasis));
+
+  const netCapital = deposits - withdrawals;
+  const equity = cash + holdingsValue;
+  const totalReturn = equity - netCapital;
+  const totalReturnPct = netCapital>0 ? (totalReturn/netCapital*100) : 0;
+
+  return {cash,deposits,withdrawals,netCapital,realized,feesPaid,holdings,holdingsValue,holdingsCost,unrealized,equity,totalReturn,totalReturnPct};
+}
+
+// current net quantity held for an asset (for sell validation)
+function heldQty(assetId){
+  let q=0;
+  for(const t of state.transactions){
+    if(t.assetId!==assetId) continue;
+    if(t.type==="BUY") q+=t.qty; else if(t.type==="SELL") q-=t.qty;
+  }
+  return q;
+}
+
+/* ---------- rendering ---------- */
+const viewEl = document.getElementById("view");
+function render(){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.view===state.ui.view));
+  const v = state.ui.view;
+  if(v==="dashboard") renderDashboard();
+  else if(v==="holdings") renderHoldings();
+  else if(v==="ledger") renderLedger();
+  else if(v==="settings") renderSettings();
+}
+
+function renderDashboard(){
+  const p = computePortfolio();
+  const tr = p.totalReturn, un = p.unrealized, rz = p.realized;
+  viewEl.innerHTML = `
+    <div class="grid cards" style="margin-bottom:16px">
+      <div class="card hero">
+        <div>
+          <div class="label">Total return vs original capital</div>
+          <div class="big ${cls(tr)}">${sign(tr)}${fmtUSD(tr)}</div>
+          <div class="sub ${cls(tr)}">${fmtPct(p.totalReturnPct)} on ${fmtUSD(p.netCapital)} net capital</div>
+        </div>
+        <div>
+          <div class="label">Current equity</div>
+          <div class="value">${fmtUSD(p.equity)}</div>
+          <div class="sub muted">cash ${fmtUSD(p.cash)} + holdings ${fmtUSD(p.holdingsValue)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="grid cards">
+      <div class="card"><div class="label">Net capital</div><div class="value">${fmtUSD(p.netCapital)}</div>
+        <div class="sub muted">${fmtUSD(p.deposits)} in · ${fmtUSD(p.withdrawals)} out</div></div>
+      <div class="card"><div class="label">Cash available</div><div class="value ${p.cash<0?'neg':''}">${fmtUSD(p.cash)}</div>
+        <div class="sub muted">buying power</div></div>
+      <div class="card"><div class="label">Holdings value</div><div class="value">${fmtUSD(p.holdingsValue)}</div>
+        <div class="sub muted">cost ${fmtUSD(p.holdingsCost)}</div></div>
+      <div class="card"><div class="label">Realized P&L</div><div class="value ${cls(rz)}">${sign(rz)}${fmtUSD(rz)}</div>
+        <div class="sub muted">locked-in from sells</div></div>
+      <div class="card"><div class="label">Unrealized P&L</div><div class="value ${cls(un)}">${sign(un)}${fmtUSD(un)}</div>
+        <div class="sub muted">open positions</div></div>
+      <div class="card"><div class="label">Fees paid</div><div class="value">${fmtUSD(p.feesPaid)}</div>
+        <div class="sub muted">total trading fees</div></div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h2>Open positions <span class="spacer"></span><span class="muted price-fresh" id="freshHint"></span></h2>
+      ${p.holdings.length? holdingsTable(p, true) : emptyBlock("📈","No open positions","Add a Buy transaction to start tracking a holding.")}
+    </div>
+  `;
+  document.getElementById("freshHint").textContent = freshnessText(p.holdings);
+}
+
+function holdingsTable(p, compact){
+  const rows = p.holdings.map(h=>{
+    const badge = h.asset.img ? `<img src="${h.asset.img}" alt="">` : (h.asset.symbol||"?").slice(0,3).toUpperCase();
+    const pct = p.holdingsValue>0 && h.marketValue!=null ? (h.marketValue/p.holdingsValue*100):0;
+    const uPnlPct = h.costBasis>0 && h.unrealized!=null ? (h.unrealized/h.costBasis*100):null;
+    return `<tr>
+      <td><div class="sym"><div class="badge">${badge}</div>
+        <div class="meta">${(h.asset.symbol||"").toUpperCase()} <span class="tag ${h.asset.type}">${h.asset.type}</span><small>${h.asset.name||""}</small></div></div></td>
+      <td>${fmtNum(h.qty)}</td>
+      <td>${fmtUSD(h.avgCost)}</td>
+      <td>${fmtUSD(h.costBasis)}</td>
+      <td>${h.live!=null?fmtUSD(h.live):'<span class="muted">—</span>'}</td>
+      <td>${h.marketValue!=null?fmtUSD(h.marketValue):'<span class="muted">—</span>'}</td>
+      <td class="${h.unrealized!=null?cls(h.unrealized):''}">${h.unrealized!=null?sign(h.unrealized)+fmtUSD(h.unrealized)+(uPnlPct!=null?` <small>(${fmtPct(uPnlPct)})</small>`:''):'<span class="muted">—</span>'}</td>
+      ${compact?`<td style="width:120px"><div class="bar"><i style="width:${Math.min(100,pct).toFixed(1)}%"></i></div><small class="muted">${pct.toFixed(1)}%</small></td>`:''}
+    </tr>`;
+  }).join("");
+  return `<table><thead><tr>
+    <th>Asset</th><th>Qty</th><th>Avg cost</th><th>Cost basis</th><th>Live price</th><th>Market value</th><th>Unrealized P&L</th>${compact?'<th>Weight</th>':''}
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderHoldings(){
+  const p = computePortfolio();
+  viewEl.innerHTML = `
+    <div class="panel">
+      <h2>Holdings <span class="spacer"></span><span class="muted price-fresh">${freshnessText(p.holdings)}</span></h2>
+      ${p.holdings.length? holdingsTable(p,false): emptyBlock("📈","No open positions","Add a Buy transaction to start tracking a holding.")}
+    </div>`;
+}
+
+function renderLedger(){
+  const txns = [...state.transactions].sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
+  const rows = txns.map(t=>{
+    let detail="", amount=0;
+    if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note||"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
+    else{
+      const a=state.assets[t.assetId]||{symbol:t.assetId};
+      const gross=t.qty*t.price, fee=t.fee||0;
+      detail=`${fmtNum(t.qty)} ${(a.symbol||"").toUpperCase()} @ ${fmtUSD(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+      amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
+    }
+    return `<tr>
+      <td><small class="muted">${new Date(t.date).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></td>
+      <td><span class="tag ${t.type}">${t.type}</span></td>
+      <td style="text-align:left">${detail}${t.note && (t.type==='BUY'||t.type==='SELL')?` <small class="muted">— ${t.note}</small>`:''}</td>
+      <td class="${cls(amount)}">${sign(amount)}${fmtUSD(amount)}</td>
+      <td style="width:1px">
+        <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
+        <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
+      </td>
+    </tr>`;
+  }).join("");
+  viewEl.innerHTML = `
+    <div class="panel">
+      <h2>Transaction ledger <span class="spacer"></span>
+        <button class="btn sm" id="exportBtn">⭳ Export JSON</button>
+        <button class="btn sm" id="importBtn">⭱ Import JSON</button>
+        <button class="btn sm primary" id="addBtn2">+ Add</button>
+      </h2>
+      ${txns.length? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : emptyBlock("🧾","No transactions yet","Start by adding a Deposit for your initial capital.")}
+    </div>`;
+}
+
+function renderSettings(){
+  const s = state.settings;
+  viewEl.innerHTML = `
+    <div class="panel" style="max-width:640px">
+      <h2>Settings</h2>
+      <div style="padding:18px">
+        <div class="field">
+          <label>Finnhub API key (for live stock prices)</label>
+          <input type="text" id="setKey" value="${(s.finnhubKey||"").replace(/"/g,'&quot;')}" placeholder="paste your free key" />
+          <div class="hint">Get a free key at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>. Crypto prices via CoinGecko need no key.</div>
+        </div>
+        <div class="field">
+          <label>Auto-refresh prices</label>
+          <select id="setRefresh">
+            <option value="0">Off (manual only)</option>
+            <option value="30">Every 30 seconds</option>
+            <option value="60">Every 1 minute</option>
+            <option value="300">Every 5 minutes</option>
+          </select>
+        </div>
+        <div class="flex" style="margin-top:8px">
+          <button class="btn primary" id="saveSettings">Save settings</button>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn danger" id="resetAll">Reset all data</button>
+        </div>
+        <div class="warn" style="margin-top:16px">Your data is stored only in this browser (localStorage). Use <b>Export JSON</b> in the Ledger tab to back it up.</div>
+      </div>
+    </div>`;
+  document.getElementById("setRefresh").value = String(s.autoRefreshSec||0);
+  document.getElementById("saveSettings").onclick = ()=>{
+    state.settings.finnhubKey = document.getElementById("setKey").value.trim();
+    state.settings.autoRefreshSec = parseInt(document.getElementById("setRefresh").value,10)||0;
+    save(); setupAutoRefresh(); toast("Settings saved"); if(state.settings.finnhubKey) refreshPrices();
+  };
+  document.getElementById("resetAll").onclick = ()=>{
+    if(confirm("Delete ALL transactions and settings? This cannot be undone.")){ state=defaultState(); save(); render(); toast("All data cleared"); }
+  };
+}
+
+function emptyBlock(em,title,sub){ return `<div class="empty"><div class="em">${em}</div><b>${title}</b><div class="muted" style="margin-top:4px">${sub}</div></div>`; }
+function freshnessText(holdings){
+  const times = holdings.map(h=>h.updatedAt).filter(Boolean).map(t=>new Date(t).getTime());
+  if(!times.length) return "prices not loaded";
+  const latest = Math.max(...times);
+  const secs = Math.round((Date.now()-latest)/1000);
+  return "updated " + (secs<60? secs+"s ago" : Math.round(secs/60)+"m ago");
+}
+
+/* ---------- price fetching ---------- */
+async function refreshPrices(){
+  const status = document.getElementById("apiStatus");
+  const cryptoIds = new Set(), stockSyms = new Set();
+  for(const a of Object.values(state.assets)){
+    const q = heldQty(a.id); if(q<=1e-9) continue;
+    if(a.type==="crypto" && a.coingeckoId) cryptoIds.add(a.coingeckoId);
+    else if(a.type==="stock") stockSyms.add(a.symbol.toUpperCase());
+  }
+  if(!cryptoIds.size && !stockSyms.size){ status.textContent="prices: nothing held"; return; }
+  status.textContent="prices: updating…";
+  let ok=0, fail=0;
+  try{
+    if(cryptoIds.size){
+      const url = `https://api.coingecko.com/api/v3/simple/price?ids=${[...cryptoIds].join(",")}&vs_currencies=usd`;
+      const r = await fetch(url); const j = await r.json();
+      for(const a of Object.values(state.assets)){
+        if(a.type==="crypto" && a.coingeckoId && j[a.coingeckoId] && j[a.coingeckoId].usd!=null){
+          state.prices[a.id]={price:j[a.coingeckoId].usd, updatedAt:new Date().toISOString()}; ok++;
+        }
+      }
+    }
+    if(stockSyms.size){
+      const key = state.settings.finnhubKey;
+      if(!key){ fail+=stockSyms.size; }
+      else{
+        for(const a of Object.values(state.assets)){
+          if(a.type!=="stock" || heldQty(a.id)<=1e-9) continue;
+          try{
+            const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(a.symbol.toUpperCase())}&token=${encodeURIComponent(key)}`);
+            const j = await r.json();
+            if(j && typeof j.c==="number" && j.c>0){ state.prices[a.id]={price:j.c, updatedAt:new Date().toISOString()}; ok++; }
+            else fail++;
+          }catch(e){ fail++; }
+        }
+      }
+    }
+    save();
+    status.textContent = `prices: ${ok} ok${fail?`, ${fail} failed`:''}`;
+    if(fail && stockSyms.size && !state.settings.finnhubKey) toast("Add a Finnhub key in Settings for stock prices", true);
+    render();
+  }catch(e){
+    status.textContent="prices: error";
+    toast("Price fetch failed: "+e.message, true);
+  }
+}
+
+let autoTimer=null;
+function setupAutoRefresh(){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+  const s = state.settings.autoRefreshSec||0;
+  if(s>0){ autoTimer=setInterval(refreshPrices, s*1000); }
+}
+
+/* ---------- transaction modal ---------- */
+const overlay = document.getElementById("txOverlay");
+let modalType="DEPOSIT", modalAssetType="crypto", pickedAsset=null, editingId=null, searchTimer=null;
+
+function openModal(txn){
+  editingId = txn? txn.id : null;
+  document.getElementById("txTitle").textContent = txn? "Edit transaction" : "Add transaction";
+  // defaults
+  modalType = txn? txn.type : "DEPOSIT";
+  modalAssetType = txn && txn.assetId && state.assets[txn.assetId] ? state.assets[txn.assetId].type : "crypto";
+  pickedAsset = txn && txn.assetId ? state.assets[txn.assetId] : null;
+  setSeg("txTypeSeg","type",modalType);
+  setSeg("assetTypeSeg","atype",modalAssetType);
+  document.getElementById("cashAmount").value = txn && (txn.type==="DEPOSIT"||txn.type==="WITHDRAW")? txn.amount : "";
+  document.getElementById("assetSearch").value = pickedAsset? `${(pickedAsset.symbol||"").toUpperCase()} — ${pickedAsset.name||""}` : "";
+  document.getElementById("qty").value = txn && txn.qty!=null? txn.qty : "";
+  document.getElementById("price").value = txn && txn.price!=null? txn.price : "";
+  document.getElementById("fee").value = txn && txn.fee? txn.fee : "";
+  document.getElementById("txNote").value = txn? (txn.note||"") : "";
+  document.getElementById("txDate").value = toLocalInput(txn? txn.date : new Date().toISOString());
+  document.getElementById("searchResults").classList.remove("open");
+  document.getElementById("assetPicked").textContent = pickedAsset? `Tracking ${(pickedAsset.symbol||"").toUpperCase()} (${pickedAsset.type})` : "";
+  updateModalMode(); updateTradeCalc();
+  overlay.classList.add("open");
+}
+function closeModal(){ overlay.classList.remove("open"); }
+
+function setSeg(segId, attr, val){
+  document.querySelectorAll(`#${segId} button`).forEach(b=>b.classList.toggle("active", b.dataset[attr]===val));
+}
+function updateModalMode(){
+  const isCash = modalType==="DEPOSIT"||modalType==="WITHDRAW";
+  document.getElementById("cashFields").style.display = isCash? "block":"none";
+  document.getElementById("tradeFields").style.display = isCash? "none":"block";
+}
+function toLocalInput(iso){
+  const d=new Date(iso); const p=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function updateTradeCalc(){
+  const el=document.getElementById("tradeCalc"), warn=document.getElementById("tradeWarn");
+  warn.innerHTML="";
+  if(modalType==="DEPOSIT"||modalType==="WITHDRAW"){ return; }
+  const qty=parseFloat(document.getElementById("qty").value)||0;
+  const price=parseFloat(document.getElementById("price").value)||0;
+  const fee=parseFloat(document.getElementById("fee").value)||0;
+  const gross=qty*price;
+  const p=computePortfolio();
+  if(modalType==="BUY"){
+    const total=gross+fee;
+    el.innerHTML=`Cost: <b>${fmtUSD(total)}</b> (${fmtNum(qty)} × ${fmtUSD(price)}${fee?` + ${fmtUSD(fee)} fee`:''}) &nbsp;·&nbsp; cash after: <b class="${(p.cash-total)<0?'neg':''}">${fmtUSD(p.cash-total)}</b>`;
+    if(total>p.cash+1e-9) warn.innerHTML=`<div class="warn">This buy exceeds your available cash (${fmtUSD(p.cash)}). It's allowed, but your cash will go negative.</div>`;
+  }else{
+    const proceeds=gross-fee;
+    let basisSold=0, held=0;
+    if(pickedAsset){ const pos=p.holdings.find(h=>h.assetId===pickedAsset.id); if(pos){ basisSold=pos.avgCost*qty; held=heldQty(pickedAsset.id);} else held=heldQty(pickedAsset.id); }
+    const realized=proceeds-basisSold;
+    el.innerHTML=`Proceeds: <b>${fmtUSD(proceeds)}</b> &nbsp;·&nbsp; realized P&L: <b class="${cls(realized)}">${sign(realized)}${fmtUSD(realized)}</b>`;
+    if(pickedAsset && qty>held+1e-9) warn.innerHTML=`<div class="warn">You only hold ${fmtNum(held)} units of ${(pickedAsset.symbol||"").toUpperCase()}. Selling more than held isn't allowed.</div>`;
+  }
+}
+
+/* asset search (CoinGecko for crypto, Finnhub for stocks) */
+async function doAssetSearch(q){
+  const box=document.getElementById("searchResults");
+  if(!q || q.length<2){ box.classList.remove("open"); box.innerHTML=""; return; }
+  box.innerHTML=`<div class="sr-item muted">Searching…</div>`; box.classList.add("open");
+  try{
+    let items=[];
+    if(modalAssetType==="crypto"){
+      const r=await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
+      const j=await r.json();
+      items=(j.coins||[]).slice(0,8).map(c=>({type:"crypto",symbol:c.symbol,name:c.name,coingeckoId:c.id,img:c.thumb}));
+    }else{
+      const key=state.settings.finnhubKey;
+      if(!key){ box.innerHTML=`<div class="sr-item muted">Add a Finnhub key in Settings to search stocks, or type the exact ticker and pick it below.</div>`;
+        items=[{type:"stock",symbol:q.toUpperCase(),name:q.toUpperCase(),coingeckoId:null,img:null}]; }
+      else{
+        const r=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${encodeURIComponent(key)}`);
+        const j=await r.json();
+        items=(j.result||[]).filter(x=>!x.symbol.includes(".")).slice(0,8).map(x=>({type:"stock",symbol:x.symbol,name:x.description,coingeckoId:null,img:null}));
+        if(!items.length) items=[{type:"stock",symbol:q.toUpperCase(),name:q.toUpperCase(),coingeckoId:null,img:null}];
+      }
+    }
+    box.innerHTML = items.map((it,i)=>`<div class="sr-item" data-i="${i}">
+       ${it.img?`<img src="${it.img}">`:`<div class="badge" style="width:22px;height:22px;font-size:10px">${it.symbol.slice(0,3).toUpperCase()}</div>`}
+       <div><b>${it.symbol.toUpperCase()}</b> <small class="muted">${it.name||""}</small></div></div>`).join("");
+    box._items=items;
+    box.querySelectorAll(".sr-item[data-i]").forEach(el=>el.onclick=()=>{
+      const it=box._items[parseInt(el.dataset.i,10)];
+      pickedAsset = { id:`${it.type}:${it.symbol.toUpperCase()}`, type:it.type, symbol:it.symbol.toUpperCase(), name:it.name, coingeckoId:it.coingeckoId, img:it.img };
+      document.getElementById("assetSearch").value=`${pickedAsset.symbol} — ${pickedAsset.name||""}`;
+      document.getElementById("assetPicked").textContent=`Tracking ${pickedAsset.symbol} (${pickedAsset.type})`;
+      box.classList.remove("open");
+      updateTradeCalc();
+    });
+  }catch(e){ box.innerHTML=`<div class="sr-item muted">Search failed: ${e.message}</div>`; }
+}
+
+async function useLivePrice(){
+  if(!pickedAsset){ toast("Pick an asset first", true); return; }
+  try{
+    let price=null;
+    if(pickedAsset.type==="crypto" && pickedAsset.coingeckoId){
+      const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${pickedAsset.coingeckoId}&vs_currencies=usd`);
+      const j=await r.json(); price=j[pickedAsset.coingeckoId]?.usd;
+    }else if(pickedAsset.type==="stock"){
+      const key=state.settings.finnhubKey; if(!key){ toast("Add a Finnhub key in Settings", true); return; }
+      const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(pickedAsset.symbol)}&token=${encodeURIComponent(key)}`);
+      const j=await r.json(); price=j.c;
+    }
+    if(price>0){ document.getElementById("price").value=price; updateTradeCalc(); toast(`Live ${pickedAsset.symbol}: ${fmtUSD(price)}`); }
+    else toast("Couldn't get a live price", true);
+  }catch(e){ toast("Live price failed: "+e.message, true); }
+}
+
+function saveTransaction(){
+  const dateVal=document.getElementById("txDate").value;
+  const date = dateVal? new Date(dateVal).toISOString() : new Date().toISOString();
+  const note=document.getElementById("txNote").value.trim();
+  let txn;
+  if(modalType==="DEPOSIT"||modalType==="WITHDRAW"){
+    const amount=parseFloat(document.getElementById("cashAmount").value);
+    if(!(amount>0)){ toast("Enter a positive amount", true); return; }
+    txn={type:modalType, amount, date, note};
+  }else{
+    if(!pickedAsset){ toast("Search and pick an asset", true); return; }
+    const qty=parseFloat(document.getElementById("qty").value);
+    const price=parseFloat(document.getElementById("price").value);
+    const fee=parseFloat(document.getElementById("fee").value)||0;
+    if(!(qty>0)){ toast("Enter a positive quantity", true); return; }
+    if(!(price>0)){ toast("Enter a positive price", true); return; }
+    if(modalType==="SELL"){
+      // validate against held qty, excluding the transaction being edited
+      let held=0;
+      for(const t of state.transactions){ if(t.id===editingId) continue; if(t.assetId!==pickedAsset.id) continue;
+        if(t.type==="BUY") held+=t.qty; else if(t.type==="SELL") held-=t.qty; }
+      if(qty>held+1e-9){ toast(`Can't sell ${fmtNum(qty)}; you only hold ${fmtNum(held)}`, true); return; }
+    }
+    // register asset
+    state.assets[pickedAsset.id]=pickedAsset;
+    txn={type:modalType, assetId:pickedAsset.id, qty, price, fee, date, note};
+  }
+  if(editingId){
+    const idx=state.transactions.findIndex(t=>t.id===editingId);
+    txn.id=editingId; txn._seq=state.transactions[idx]._seq;
+    state.transactions[idx]=txn;
+  }else{
+    txn.id=uid(); txn._seq=state.transactions.length;
+    state.transactions.push(txn);
+  }
+  save(); closeModal(); render(); toast("Transaction saved"); refreshPrices();
+}
+
+/* ---------- export / import ---------- */
+function exportData(){
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`cryptoledger-backup-${new Date().toISOString().slice(0,10)}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function importData(){
+  const inp=document.createElement("input"); inp.type="file"; inp.accept="application/json";
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f) return; const rd=new FileReader();
+    rd.onload=()=>{ try{ const s=JSON.parse(rd.result);
+      if(!s.transactions) throw new Error("not a CryptoLedger backup");
+      state=Object.assign(defaultState(),s); save(); render(); toast("Data imported"); refreshPrices();
+    }catch(e){ toast("Import failed: "+e.message, true); } };
+    rd.readAsText(f); };
+  inp.click();
+}
+
+/* ---------- toast ---------- */
+let toastTimer=null;
+function toast(msg, err){
+  const t=document.getElementById("toast"); t.textContent=msg; t.className="toast show"+(err?" err":"");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.className="toast",2600);
+}
+
+/* ---------- wiring ---------- */
+document.getElementById("tabs").addEventListener("click",e=>{
+  const tab=e.target.closest(".tab"); if(!tab) return;
+  state.ui.view=tab.dataset.view; save(); render();
+});
+document.getElementById("addBtn").onclick=()=>openModal(null);
+document.getElementById("refreshBtn").onclick=refreshPrices;
+document.getElementById("txClose").onclick=closeModal;
+document.getElementById("txCancel").onclick=closeModal;
+document.getElementById("txSave").onclick=saveTransaction;
+overlay.addEventListener("click",e=>{ if(e.target===overlay) closeModal(); });
+
+document.getElementById("txTypeSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  modalType=b.dataset.type; setSeg("txTypeSeg","type",modalType); updateModalMode(); updateTradeCalc();
+});
+document.getElementById("assetTypeSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  modalAssetType=b.dataset.atype; setSeg("assetTypeSeg","atype",modalAssetType);
+  pickedAsset=null; document.getElementById("assetSearch").value=""; document.getElementById("assetPicked").textContent="";
+  document.getElementById("searchResults").classList.remove("open");
+});
+document.getElementById("assetSearch").addEventListener("input",e=>{
+  pickedAsset=null; document.getElementById("assetPicked").textContent="";
+  clearTimeout(searchTimer); const q=e.target.value.trim(); searchTimer=setTimeout(()=>doAssetSearch(q),300);
+});
+["qty","price","fee"].forEach(id=>document.getElementById(id).addEventListener("input",updateTradeCalc));
+document.getElementById("useLive").onclick=useLivePrice;
+
+// event delegation for ledger + dynamically-rendered buttons
+viewEl.addEventListener("click",e=>{
+  const ed=e.target.closest("[data-edit]"); const del=e.target.closest("[data-del]");
+  if(ed){ const t=state.transactions.find(x=>x.id===ed.dataset.edit); if(t) openModal(t); return; }
+  if(del){ const id=del.dataset.del; if(confirm("Delete this transaction?")){ state.transactions=state.transactions.filter(x=>x.id!==id); save(); render(); toast("Deleted"); } return; }
+  if(e.target.id==="exportBtn") exportData();
+  if(e.target.id==="importBtn") importData();
+  if(e.target.id==="addBtn2") openModal(null);
+});
+document.addEventListener("keydown",e=>{ if(e.key==="Escape" && overlay.classList.contains("open")) closeModal(); });
+
+/* ---------- boot ---------- */
+render();
+setupAutoRefresh();
+if(state.transactions.length) refreshPrices();
+</script>
+</body>
+</html>
