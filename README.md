@@ -49,6 +49,8 @@ Every figure on the dashboard shows a second line in your chosen currency, conve
 
 Change it in **Settings → Secondary currency** (PKR, INR, AED, GBP, EUR, CAD, SAR, JPY). The exchange rate comes from open.er-api.com (free, no key) and refreshes with the price refresh.
 
+**Manual rate override** — in **Settings → Exchange rate**, tick *Override rate manually* to pin your own USD rate (e.g. the rate you actually get converting via USDT) instead of the live market rate. The header chip then reads `USD/PKR … · manual`. Untick it to go back to the live rate anytime. (Switching the secondary currency clears a manual rate, since it was set for the old currency.)
+
 ## Backup
 
 Ledger tab → **Export JSON** / **Import JSON**. Keep a backup, since clearing browser data wipes localStorage.

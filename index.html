@@ -223,7 +223,7 @@ function defaultState(){
     transactions: [],                 // {id,type,date,note, ... }
     assets: {},                       // assetId -> {id,type,symbol,name,coingeckoId,img}
     prices: {},                       // assetId -> {price,updatedAt}
-    settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR" },
+    settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR", manualRate:null },
     fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
     ui: { view:"dashboard" }
   };
@@ -245,10 +245,9 @@ function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 
 /* ---------- secondary currency (e.g. PKR) ---------- */
 function secCode(){ return (state.settings && state.settings.secondaryCurrency) || "PKR"; }
-function secRate(){
-  const c = secCode();
-  return state.fx && state.fx.rates && state.fx.rates[c]!=null ? state.fx.rates[c] : null;
-}
+function rateIsManual(){ const m = state.settings && state.settings.manualRate; return typeof m==="number" && m>0; }
+function fetchedRate(){ const c = secCode(); return state.fx && state.fx.rates && state.fx.rates[c]!=null ? state.fx.rates[c] : null; }
+function secRate(){ return rateIsManual() ? state.settings.manualRate : fetchedRate(); }
 // Format a USD amount in the secondary currency (returns "" if no rate yet).
 function fmtSec(usd){
   const r = secRate(); if(r==null) return "";
@@ -275,7 +274,7 @@ async function fetchFx(){
 function updateFxChip(){
   const el = document.getElementById("fxStatus"); if(!el) return;
   const r = secRate();
-  el.textContent = r!=null ? `USD/${secCode()} ${r.toLocaleString(undefined,{maximumFractionDigits:2})}` : `${secCode()}: no rate`;
+  el.textContent = r!=null ? `USD/${secCode()} ${r.toLocaleString(undefined,{maximumFractionDigits:2})}${rateIsManual()?" · manual":""}` : `${secCode()}: no rate`;
 }
 
 /* ---------- accounting engine ---------- */
@@ -491,6 +490,14 @@ function renderSettings(){
           <div class="hint">Live USD exchange rate via open.er-api.com (free, no key). Values in this currency appear under each dashboard figure.</div>
         </div>
         <div class="field">
+          <label>Exchange rate</label>
+          <label class="flex" style="font-weight:600;color:var(--text);cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="setManual" style="width:auto"> Override rate manually
+          </label>
+          <input type="number" id="setRate" step="any" min="0" placeholder="e.g. 285" />
+          <div class="hint" id="rateHint"></div>
+        </div>
+        <div class="field">
           <label>Auto-refresh prices</label>
           <select id="setRefresh">
             <option value="0">Off (manual only)</option>
@@ -509,12 +516,36 @@ function renderSettings(){
     </div>`;
   document.getElementById("setRefresh").value = String(s.autoRefreshSec||0);
   document.getElementById("setCurrency").value = secCode();
+  const manualChk = document.getElementById("setManual");
+  const rateInp = document.getElementById("setRate");
+  const rateHint = document.getElementById("rateHint");
+  function syncRateUI(){
+    rateInp.disabled = !manualChk.checked;
+    rateInp.style.opacity = manualChk.checked ? "1" : ".5";
+    const fetched = fetchedRate();
+    rateHint.innerHTML = manualChk.checked
+      ? `Using your fixed rate. ${fetched!=null?`Live market rate is ${fetched.toLocaleString(undefined,{maximumFractionDigits:2})}.`:""} Uncheck to follow the live rate.`
+      : `Following the live market rate${fetched!=null?` (${fetched.toLocaleString(undefined,{maximumFractionDigits:2})})`:""}. Check the box to pin your own (e.g. your USDT conversion rate).`;
+  }
+  manualChk.checked = rateIsManual();
+  rateInp.value = rateIsManual() ? s.manualRate : (fetchedRate()!=null ? +fetchedRate().toFixed(2) : "");
+  manualChk.onchange = syncRateUI;
+  syncRateUI();
   document.getElementById("saveSettings").onclick = ()=>{
     state.settings.finnhubKey = document.getElementById("setKey").value.trim();
     state.settings.autoRefreshSec = parseInt(document.getElementById("setRefresh").value,10)||0;
     const prevCur = state.settings.secondaryCurrency;
     state.settings.secondaryCurrency = document.getElementById("setCurrency").value;
-    save(); setupAutoRefresh(); toast("Settings saved");
+    if(manualChk.checked){
+      const v = parseFloat(rateInp.value);
+      if(!(v>0)){ toast("Enter a positive rate, or uncheck override", true); return; }
+      state.settings.manualRate = v;
+    } else {
+      state.settings.manualRate = null;
+    }
+    // a manual rate is tied to the currency it was set for; switching currency drops it
+    if(state.settings.secondaryCurrency!==prevCur) state.settings.manualRate = null;
+    save(); setupAutoRefresh(); updateFxChip(); render(); toast("Settings saved");
     if(state.settings.secondaryCurrency!==prevCur) fetchFx();
     if(state.settings.finnhubKey) refreshPrices();
   };
