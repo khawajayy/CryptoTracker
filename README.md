@@ -43,6 +43,12 @@ Deposit $3,000 → buy Intel $3,000 → sell Intel $2,500 (realized −$500) →
 - **Stocks** — Finnhub. Paste a free key in **Settings** (get one at https://finnhub.io/register). Without a key, stock live prices are skipped (everything else still works, and you can enter prices manually).
 - Manual **Refresh** button + optional auto-refresh in Settings. Last-known prices are cached.
 
+## Secondary currency (PKR)
+
+Every figure on the dashboard shows a second line in your chosen currency, converted at the live USD rate. Default is **PKR (Pakistani Rupee)** — so net capital, equity, holdings, and realized/unrealized P&L all appear in rupees under the USD amount, and the header shows the current `USD/PKR` rate.
+
+Change it in **Settings → Secondary currency** (PKR, INR, AED, GBP, EUR, CAD, SAR, JPY). The exchange rate comes from open.er-api.com (free, no key) and refreshes with the price refresh.
+
 ## Backup
 
 Ledger tab → **Export JSON** / **Import JSON**. Keep a backup, since clearing browser data wipes localStorage.

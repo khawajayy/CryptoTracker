@@ -112,6 +112,7 @@
   <header class="app">
     <div class="logo"><span class="dot"></span> CryptoLedger</div>
     <span class="tag" id="apiStatus">prices: idle</span>
+    <span class="tag" id="fxStatus"></span>
     <div class="spacer"></div>
     <div class="toolbar">
       <button class="btn" id="refreshBtn">↻ Refresh prices</button>
@@ -222,7 +223,8 @@ function defaultState(){
     transactions: [],                 // {id,type,date,note, ... }
     assets: {},                       // assetId -> {id,type,symbol,name,coingeckoId,img}
     prices: {},                       // assetId -> {price,updatedAt}
-    settings: { finnhubKey:"", autoRefreshSec:0 },
+    settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR" },
+    fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
     ui: { view:"dashboard" }
   };
 }
@@ -231,10 +233,50 @@ function load(){
     const raw = localStorage.getItem(LS_KEY);
     if(!raw) return defaultState();
     const s = JSON.parse(raw);
-    return Object.assign(defaultState(), s, {ui: Object.assign({view:"dashboard"}, s.ui||{})});
+    const d = defaultState();
+    return Object.assign(d, s, {
+      settings: Object.assign(d.settings, s.settings||{}),
+      fx: Object.assign(d.fx, s.fx||{}),
+      ui: Object.assign({view:"dashboard"}, s.ui||{})
+    });
   }catch(e){ return defaultState(); }
 }
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+
+/* ---------- secondary currency (e.g. PKR) ---------- */
+function secCode(){ return (state.settings && state.settings.secondaryCurrency) || "PKR"; }
+function secRate(){
+  const c = secCode();
+  return state.fx && state.fx.rates && state.fx.rates[c]!=null ? state.fx.rates[c] : null;
+}
+// Format a USD amount in the secondary currency (returns "" if no rate yet).
+function fmtSec(usd){
+  const r = secRate(); if(r==null) return "";
+  const code = secCode(), v = usd*r;
+  try{ return (v<0?"-":"") + new Intl.NumberFormat(undefined,{style:"currency",currency:code,maximumFractionDigits:0}).format(Math.abs(v)); }
+  catch(e){ return (v<0?"-":"") + code + " " + Math.abs(v).toLocaleString(undefined,{maximumFractionDigits:0}); }
+}
+// A "≈ ₨…" sub-line for a dashboard figure; colored to match a P&L value when asked.
+function secLine(usd, colored){
+  const r = secRate(); if(r==null) return "";
+  return `<div class="sub ${colored?cls(usd):'muted'}" style="opacity:.85">≈ ${fmtSec(usd)}</div>`;
+}
+async function fetchFx(){
+  try{
+    const r = await fetch("https://open.er-api.com/v6/latest/USD");
+    const j = await r.json();
+    if(j && j.rates && j.rates[secCode()]!=null){
+      state.fx = { base:"USD", rates:j.rates, updatedAt:new Date().toISOString() };
+      save(); updateFxChip(); return true;
+    }
+  }catch(e){}
+  return false;
+}
+function updateFxChip(){
+  const el = document.getElementById("fxStatus"); if(!el) return;
+  const r = secRate();
+  el.textContent = r!=null ? `USD/${secCode()} ${r.toLocaleString(undefined,{maximumFractionDigits:2})}` : `${secCode()}: no rate`;
+}
 
 /* ---------- accounting engine ---------- */
 // Replays the whole ledger in chronological order and returns derived figures.
@@ -325,27 +367,29 @@ function renderDashboard(){
           <div class="label">Total return vs original capital</div>
           <div class="big ${cls(tr)}">${sign(tr)}${fmtUSD(tr)}</div>
           <div class="sub ${cls(tr)}">${fmtPct(p.totalReturnPct)} on ${fmtUSD(p.netCapital)} net capital</div>
+          ${secLine(tr,true)}
         </div>
         <div>
           <div class="label">Current equity</div>
           <div class="value">${fmtUSD(p.equity)}</div>
           <div class="sub muted">cash ${fmtUSD(p.cash)} + holdings ${fmtUSD(p.holdingsValue)}</div>
+          ${secLine(p.equity,false)}
         </div>
       </div>
     </div>
     <div class="grid cards">
       <div class="card"><div class="label">Net capital</div><div class="value">${fmtUSD(p.netCapital)}</div>
-        <div class="sub muted">${fmtUSD(p.deposits)} in · ${fmtUSD(p.withdrawals)} out</div></div>
+        <div class="sub muted">${fmtUSD(p.deposits)} in · ${fmtUSD(p.withdrawals)} out</div>${secLine(p.netCapital,false)}</div>
       <div class="card"><div class="label">Cash available</div><div class="value ${p.cash<0?'neg':''}">${fmtUSD(p.cash)}</div>
-        <div class="sub muted">buying power</div></div>
+        <div class="sub muted">buying power</div>${secLine(p.cash,false)}</div>
       <div class="card"><div class="label">Holdings value</div><div class="value">${fmtUSD(p.holdingsValue)}</div>
-        <div class="sub muted">cost ${fmtUSD(p.holdingsCost)}</div></div>
+        <div class="sub muted">cost ${fmtUSD(p.holdingsCost)}</div>${secLine(p.holdingsValue,false)}</div>
       <div class="card"><div class="label">Realized P&L</div><div class="value ${cls(rz)}">${sign(rz)}${fmtUSD(rz)}</div>
-        <div class="sub muted">locked-in from sells</div></div>
+        <div class="sub muted">locked-in from sells</div>${secLine(rz,true)}</div>
       <div class="card"><div class="label">Unrealized P&L</div><div class="value ${cls(un)}">${sign(un)}${fmtUSD(un)}</div>
-        <div class="sub muted">open positions</div></div>
+        <div class="sub muted">open positions</div>${secLine(un,true)}</div>
       <div class="card"><div class="label">Fees paid</div><div class="value">${fmtUSD(p.feesPaid)}</div>
-        <div class="sub muted">total trading fees</div></div>
+        <div class="sub muted">total trading fees</div>${secLine(p.feesPaid,false)}</div>
     </div>
 
     <div class="panel" style="margin-top:18px">
@@ -433,6 +477,20 @@ function renderSettings(){
           <div class="hint">Get a free key at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>. Crypto prices via CoinGecko need no key.</div>
         </div>
         <div class="field">
+          <label>Secondary currency (shown on dashboard alongside USD)</label>
+          <select id="setCurrency">
+            <option value="PKR">PKR — Pakistani Rupee</option>
+            <option value="INR">INR — Indian Rupee</option>
+            <option value="AED">AED — UAE Dirham</option>
+            <option value="GBP">GBP — British Pound</option>
+            <option value="EUR">EUR — Euro</option>
+            <option value="CAD">CAD — Canadian Dollar</option>
+            <option value="SAR">SAR — Saudi Riyal</option>
+            <option value="JPY">JPY — Japanese Yen</option>
+          </select>
+          <div class="hint">Live USD exchange rate via open.er-api.com (free, no key). Values in this currency appear under each dashboard figure.</div>
+        </div>
+        <div class="field">
           <label>Auto-refresh prices</label>
           <select id="setRefresh">
             <option value="0">Off (manual only)</option>
@@ -450,10 +508,15 @@ function renderSettings(){
       </div>
     </div>`;
   document.getElementById("setRefresh").value = String(s.autoRefreshSec||0);
+  document.getElementById("setCurrency").value = secCode();
   document.getElementById("saveSettings").onclick = ()=>{
     state.settings.finnhubKey = document.getElementById("setKey").value.trim();
     state.settings.autoRefreshSec = parseInt(document.getElementById("setRefresh").value,10)||0;
-    save(); setupAutoRefresh(); toast("Settings saved"); if(state.settings.finnhubKey) refreshPrices();
+    const prevCur = state.settings.secondaryCurrency;
+    state.settings.secondaryCurrency = document.getElementById("setCurrency").value;
+    save(); setupAutoRefresh(); toast("Settings saved");
+    if(state.settings.secondaryCurrency!==prevCur) fetchFx();
+    if(state.settings.finnhubKey) refreshPrices();
   };
   document.getElementById("resetAll").onclick = ()=>{
     if(confirm("Delete ALL transactions and settings? This cannot be undone.")){ state=defaultState(); save(); render(); toast("All data cleared"); }
@@ -472,13 +535,14 @@ function freshnessText(holdings){
 /* ---------- price fetching ---------- */
 async function refreshPrices(){
   const status = document.getElementById("apiStatus");
+  await fetchFx();                       // keep USD -> secondary-currency rate fresh
   const cryptoIds = new Set(), stockSyms = new Set();
   for(const a of Object.values(state.assets)){
     const q = heldQty(a.id); if(q<=1e-9) continue;
     if(a.type==="crypto" && a.coingeckoId) cryptoIds.add(a.coingeckoId);
     else if(a.type==="stock") stockSyms.add(a.symbol.toUpperCase());
   }
-  if(!cryptoIds.size && !stockSyms.size){ status.textContent="prices: nothing held"; return; }
+  if(!cryptoIds.size && !stockSyms.size){ status.textContent="prices: nothing held"; render(); return; }
   status.textContent="prices: updating…";
   let ok=0, fail=0;
   try{
@@ -746,6 +810,8 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape" && overlay.classLis
 /* ---------- boot ---------- */
 render();
 setupAutoRefresh();
+updateFxChip();
+fetchFx().then(()=>render());          // load USD->secondary rate, then show PKR lines
 if(state.transactions.length) refreshPrices();
 </script>
 </body>
