@@ -332,6 +332,16 @@ function computePortfolio(){
   const totalReturn = equity - netCapital;
   const totalReturnPct = netCapital>0 ? (totalReturn/netCapital*100) : 0;
 
+  // Break-even price per holding: the price this asset must reach for total
+  // equity to equal net capital, with cash and every other position held constant.
+  //   restOfAccount = equity - this holding's current contribution
+  //   breakevenPrice = (netCapital - restOfAccount) / qty
+  for(const h of holdings){
+    const contrib = h.marketValue!=null ? h.marketValue : h.costBasis;
+    const restOfAccount = equity - contrib;
+    h.breakevenPrice = h.qty>0 ? (netCapital - restOfAccount)/h.qty : null;
+  }
+
   return {cash,deposits,withdrawals,netCapital,realized,feesPaid,holdings,holdingsValue,holdingsCost,unrealized,equity,totalReturn,totalReturnPct};
 }
 
@@ -404,6 +414,16 @@ function holdingsTable(p, compact){
     const badge = h.asset.img ? `<img src="${h.asset.img}" alt="">` : (h.asset.symbol||"?").slice(0,3).toUpperCase();
     const pct = p.holdingsValue>0 && h.marketValue!=null ? (h.marketValue/p.holdingsValue*100):0;
     const uPnlPct = h.costBasis>0 && h.unrealized!=null ? (h.unrealized/h.costBasis*100):null;
+    // break-even (vs net capital) cell
+    let beCell;
+    const be = h.breakevenPrice;
+    if(be==null){ beCell='<span class="muted">—</span>'; }
+    else if(be<=0){ beCell='<span class="pos" title="Cash + your other holdings already cover net capital">✓ covered</span>'; }
+    else{
+      let sub='';
+      if(h.live!=null){ const mv=(be/h.live-1)*100; sub=` <small class="${mv>0?'neg':'pos'}">(${mv>0?'+':''}${mv.toFixed(1)}%)</small>`; }
+      beCell = fmtUSD(be)+sub;
+    }
     return `<tr>
       <td><div class="sym"><div class="badge">${badge}</div>
         <div class="meta">${(h.asset.symbol||"").toUpperCase()} <span class="tag ${h.asset.type}">${h.asset.type}</span><small>${h.asset.name||""}</small></div></div></td>
@@ -413,11 +433,13 @@ function holdingsTable(p, compact){
       <td>${h.live!=null?fmtUSD(h.live):'<span class="muted">—</span>'}</td>
       <td>${h.marketValue!=null?fmtUSD(h.marketValue):'<span class="muted">—</span>'}</td>
       <td class="${h.unrealized!=null?cls(h.unrealized):''}">${h.unrealized!=null?sign(h.unrealized)+fmtUSD(h.unrealized)+(uPnlPct!=null?` <small>(${fmtPct(uPnlPct)})</small>`:''):'<span class="muted">—</span>'}</td>
+      <td>${beCell}</td>
       ${compact?`<td style="width:120px"><div class="bar"><i style="width:${Math.min(100,pct).toFixed(1)}%"></i></div><small class="muted">${pct.toFixed(1)}%</small></td>`:''}
     </tr>`;
   }).join("");
   return `<table><thead><tr>
-    <th>Asset</th><th>Qty</th><th>Avg cost</th><th>Cost basis</th><th>Live price</th><th>Market value</th><th>Unrealized P&L</th>${compact?'<th>Weight</th>':''}
+    <th>Asset</th><th>Qty</th><th>Avg cost</th><th>Cost basis</th><th>Live price</th><th>Market value</th><th>Unrealized P&L</th>
+    <th title="Price this asset must reach for total equity to equal your net capital, with cash and other holdings held constant">Break-even <small>(net cap)</small></th>${compact?'<th>Weight</th>':''}
     </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
