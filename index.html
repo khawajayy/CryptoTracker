@@ -69,7 +69,7 @@
   .tag{font-size:10.5px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
   .tag.crypto{color:#f7a600;border-color:#5a4410;background:rgba(247,166,0,.08)}
   .tag.stock{color:#4f8cff;border-color:#22406e;background:rgba(79,140,255,.08)}
-  .tag.DEPOSIT{color:var(--green)} .tag.WITHDRAW{color:var(--amber)} .tag.BUY{color:var(--accent)} .tag.SELL{color:var(--accent2)}
+  .tag.DEPOSIT{color:var(--green)} .tag.WITHDRAW{color:var(--amber)} .tag.BUY{color:var(--accent)} .tag.SELL{color:var(--accent2)} .tag.ADJUST{color:#e879f9}
   .empty{padding:44px 18px;text-align:center;color:var(--muted)}
   .empty .em{font-size:34px;margin-bottom:8px}
   /* modal */
@@ -105,6 +105,11 @@
   .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
   .flex{display:flex;align-items:center;gap:10px}
   .warn{background:rgba(245,158,11,.1);border:1px solid #5a4410;color:#f5c451;padding:10px 12px;border-radius:10px;font-size:13px;margin-top:6px}
+  .balances{display:flex;flex-wrap:wrap;gap:8px}
+  .balances:empty{display:none}
+  .bchip{display:flex;flex-direction:column;gap:1px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:7px 12px;min-width:110px}
+  .bchip .bl{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+  .bchip .bv{font-size:15px;font-weight:800}
 </style>
 </head>
 <body>
@@ -141,7 +146,11 @@
         <button data-type="WITHDRAW">Withdraw</button>
         <button data-type="BUY">Buy</button>
         <button data-type="SELL">Sell</button>
+        <button data-type="ADJUST">Adjust</button>
       </div>
+
+      <!-- available balances for the current context -->
+      <div class="balances" id="balanceStrip" style="margin-top:12px"></div>
 
       <!-- cash fields -->
       <div id="cashFields" style="margin-top:14px">
@@ -149,6 +158,7 @@
           <label>Amount (USD)</label>
           <input type="number" id="cashAmount" placeholder="3000" step="any" min="0" />
         </div>
+        <div id="cashWarn"></div>
       </div>
 
       <!-- trade fields -->
@@ -176,6 +186,33 @@
         </div>
         <div class="calc" id="tradeCalc">—</div>
         <div id="tradeWarn"></div>
+      </div>
+
+      <!-- adjust fields -->
+      <div id="adjustFields" style="display:none;margin-top:14px">
+        <div class="field">
+          <label>What to adjust</label>
+          <div class="seg" id="adjTargetSeg">
+            <button data-adj="cash" class="active">Cash balance</button>
+            <button data-adj="asset">Holding quantity</button>
+          </div>
+        </div>
+        <div class="field" id="adjAssetField" style="display:none">
+          <label>Holding</label>
+          <select id="adjAsset"></select>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Direction</label>
+            <div class="seg" id="adjDirSeg">
+              <button data-dir="add" class="active">Add</button>
+              <button data-dir="remove">Remove</button>
+            </div>
+          </div>
+          <div class="field"><label id="adjAmtLabel">Amount (USD)</label><input type="number" id="adjAmount" step="any" min="0" placeholder="0" /></div>
+        </div>
+        <div class="calc" id="adjustCalc">—</div>
+        <div id="adjustWarn"></div>
       </div>
 
       <div class="field" style="margin-top:14px">
@@ -279,8 +316,10 @@ function updateFxChip(){
 
 /* ---------- accounting engine ---------- */
 // Replays the whole ledger in chronological order and returns derived figures.
-function computePortfolio(){
-  const txns = [...state.transactions].sort((a,b)=>{
+// Pass excludeId to ignore one transaction (used while editing it, so balance
+// checks reflect the ledger *without* the entry being changed).
+function computePortfolio(excludeId){
+  const txns = [...state.transactions].filter(t=>t.id!==excludeId).sort((a,b)=>{
     const d = new Date(a.date) - new Date(b.date);
     return d !== 0 ? d : (a._seq||0) - (b._seq||0);
   });
@@ -306,6 +345,20 @@ function computePortfolio(){
       realized += (gross - fee) - basisSold;
       p.qty -= t.qty; p.costBasis -= basisSold;
       if(p.qty < 1e-9){ p.qty=0; p.costBasis=0; }
+    }
+    else if(t.type==="ADJUST"){
+      if(t.target==="cash"){ cash += t.delta; }         // delta signed: +add / -remove
+      else {                                             // asset quantity adjustment
+        const p = pos[t.assetId] || (pos[t.assetId]={qty:0,costBasis:0});
+        if(t.qtyDelta >= 0){                             // bonus/airdrop units come in at $0 cost
+          p.qty += t.qtyDelta;
+        } else {                                         // remove units at average cost, no realized P&L
+          const removeQ = Math.min(-t.qtyDelta, p.qty);
+          const avg = p.qty>0 ? p.costBasis/p.qty : 0;
+          p.qty -= removeQ; p.costBasis -= avg*removeQ;
+        }
+        if(p.qty < 1e-9){ p.qty=0; p.costBasis=0; }
+      }
     }
   }
 
@@ -342,17 +395,18 @@ function computePortfolio(){
     h.breakevenPrice = h.qty>0 ? (netCapital - restOfAccount)/h.qty : null;
   }
 
-  return {cash,deposits,withdrawals,netCapital,realized,feesPaid,holdings,holdingsValue,holdingsCost,unrealized,equity,totalReturn,totalReturnPct};
+  return {cash,deposits,withdrawals,netCapital,realized,feesPaid,holdings,holdingsValue,holdingsCost,unrealized,equity,totalReturn,totalReturnPct,positions:pos};
 }
 
-// current net quantity held for an asset (for sell validation)
-function heldQty(assetId){
-  let q=0;
-  for(const t of state.transactions){
-    if(t.assetId!==assetId) continue;
-    if(t.type==="BUY") q+=t.qty; else if(t.type==="SELL") q-=t.qty;
-  }
-  return q;
+// current net quantity held for an asset (incl. buys, sells and adjustments)
+function heldQty(assetId, excludeId){
+  const p = computePortfolio(excludeId).positions[assetId];
+  return p ? p.qty : 0;
+}
+// list of assets currently held (qty > 0), for the adjust dropdown
+function heldAssets(excludeId){
+  const pos = computePortfolio(excludeId).positions;
+  return Object.keys(pos).filter(id=>pos[id].qty>1e-9).map(id=>state.assets[id]).filter(Boolean);
 }
 
 /* ---------- rendering ---------- */
@@ -455,19 +509,25 @@ function renderHoldings(){
 function renderLedger(){
   const txns = [...state.transactions].sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
   const rows = txns.map(t=>{
-    let detail="", amount=0;
+    let detail="", amount=0, showNote=false;
     if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note||"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
+    else if(t.type==="ADJUST"){
+      showNote=true;
+      if(t.target==="cash"){ detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`; amount=t.delta; }
+      else{ const a=state.assets[t.assetId]||{symbol:t.assetId};
+        detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${(a.symbol||"").toUpperCase()} (holding adjustment)`; amount=null; }
+    }
     else{
       const a=state.assets[t.assetId]||{symbol:t.assetId};
-      const gross=t.qty*t.price, fee=t.fee||0;
+      const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
       detail=`${fmtNum(t.qty)} ${(a.symbol||"").toUpperCase()} @ ${fmtUSD(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
       amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
     }
     return `<tr>
       <td><small class="muted">${new Date(t.date).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></td>
       <td><span class="tag ${t.type}">${t.type}</span></td>
-      <td style="text-align:left">${detail}${t.note && (t.type==='BUY'||t.type==='SELL')?` <small class="muted">— ${t.note}</small>`:''}</td>
-      <td class="${cls(amount)}">${sign(amount)}${fmtUSD(amount)}</td>
+      <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${t.note}</small>`:''}</td>
+      <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
       <td style="width:1px">
         <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
         <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
@@ -590,8 +650,9 @@ async function refreshPrices(){
   const status = document.getElementById("apiStatus");
   await fetchFx();                       // keep USD -> secondary-currency rate fresh
   const cryptoIds = new Set(), stockSyms = new Set();
+  const positions = computePortfolio().positions;
   for(const a of Object.values(state.assets)){
-    const q = heldQty(a.id); if(q<=1e-9) continue;
+    const p = positions[a.id]; if(!p || p.qty<=1e-9) continue;
     if(a.type==="crypto" && a.coingeckoId) cryptoIds.add(a.coingeckoId);
     else if(a.type==="stock") stockSyms.add(a.symbol.toUpperCase());
   }
@@ -613,7 +674,7 @@ async function refreshPrices(){
       if(!key){ fail+=stockSyms.size; }
       else{
         for(const a of Object.values(state.assets)){
-          if(a.type!=="stock" || heldQty(a.id)<=1e-9) continue;
+          if(a.type!=="stock" || !positions[a.id] || positions[a.id].qty<=1e-9) continue;
           try{
             const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(a.symbol.toUpperCase())}&token=${encodeURIComponent(key)}`);
             const j = await r.json();
@@ -643,6 +704,7 @@ function setupAutoRefresh(){
 /* ---------- transaction modal ---------- */
 const overlay = document.getElementById("txOverlay");
 let modalType="DEPOSIT", modalAssetType="crypto", pickedAsset=null, editingId=null, searchTimer=null;
+let adjTarget="cash", adjDir="add";
 
 function openModal(txn){
   editingId = txn? txn.id : null;
@@ -654,15 +716,26 @@ function openModal(txn){
   setSeg("txTypeSeg","type",modalType);
   setSeg("assetTypeSeg","atype",modalAssetType);
   document.getElementById("cashAmount").value = txn && (txn.type==="DEPOSIT"||txn.type==="WITHDRAW")? txn.amount : "";
-  document.getElementById("assetSearch").value = pickedAsset? `${(pickedAsset.symbol||"").toUpperCase()} — ${pickedAsset.name||""}` : "";
+  document.getElementById("assetSearch").value = pickedAsset && txn && txn.type!=="ADJUST"? `${(pickedAsset.symbol||"").toUpperCase()} — ${pickedAsset.name||""}` : "";
   document.getElementById("qty").value = txn && txn.qty!=null? txn.qty : "";
   document.getElementById("price").value = txn && txn.price!=null? txn.price : "";
   document.getElementById("fee").value = txn && txn.fee? txn.fee : "";
   document.getElementById("txNote").value = txn? (txn.note||"") : "";
   document.getElementById("txDate").value = toLocalInput(txn? txn.date : new Date().toISOString());
   document.getElementById("searchResults").classList.remove("open");
-  document.getElementById("assetPicked").textContent = pickedAsset? `Tracking ${(pickedAsset.symbol||"").toUpperCase()} (${pickedAsset.type})` : "";
-  updateModalMode(); updateTradeCalc();
+  document.getElementById("assetPicked").textContent = pickedAsset && (!txn||txn.type!=="ADJUST")? `Tracking ${(pickedAsset.symbol||"").toUpperCase()} (${pickedAsset.type})` : "";
+  // adjust defaults
+  if(txn && txn.type==="ADJUST"){
+    adjTarget = txn.target==="cash" ? "cash" : "asset";
+    adjDir = (txn.target==="cash" ? txn.delta : txn.qtyDelta) >= 0 ? "add" : "remove";
+    document.getElementById("adjAmount").value = Math.abs(txn.target==="cash" ? txn.delta : txn.qtyDelta);
+  } else {
+    adjTarget="cash"; adjDir="add"; document.getElementById("adjAmount").value="";
+  }
+  setSeg("adjTargetSeg","adj",adjTarget);
+  setSeg("adjDirSeg","dir",adjDir);
+  populateAdjAssets(txn && txn.type==="ADJUST" ? txn.assetId : null);
+  updateModalMode(); updateTradeCalc(); updateAdjustCalc();
   overlay.classList.add("open");
 }
 function closeModal(){ overlay.classList.remove("open"); }
@@ -670,10 +743,70 @@ function closeModal(){ overlay.classList.remove("open"); }
 function setSeg(segId, attr, val){
   document.querySelectorAll(`#${segId} button`).forEach(b=>b.classList.toggle("active", b.dataset[attr]===val));
 }
+function populateAdjAssets(selectId){
+  const sel=document.getElementById("adjAsset");
+  const held=heldAssets(editingId);
+  sel.innerHTML = held.length
+    ? held.map(a=>`<option value="${a.id}">${(a.symbol||"").toUpperCase()} — ${a.name||""}</option>`).join("")
+    : `<option value="">(no holdings to adjust)</option>`;
+  if(selectId) sel.value=selectId;
+}
 function updateModalMode(){
   const isCash = modalType==="DEPOSIT"||modalType==="WITHDRAW";
+  const isAdjust = modalType==="ADJUST";
+  const isTrade = modalType==="BUY"||modalType==="SELL";
   document.getElementById("cashFields").style.display = isCash? "block":"none";
-  document.getElementById("tradeFields").style.display = isCash? "none":"block";
+  document.getElementById("tradeFields").style.display = isTrade? "block":"none";
+  document.getElementById("adjustFields").style.display = isAdjust? "block":"none";
+  if(isAdjust){
+    document.getElementById("adjAssetField").style.display = adjTarget==="asset"? "block":"none";
+    document.getElementById("adjAmtLabel").textContent = adjTarget==="cash"? "Amount (USD)" : "Quantity";
+  }
+  updateBalanceStrip();
+}
+
+// Shows available cash / units for the current transaction context.
+function updateBalanceStrip(){
+  const strip=document.getElementById("balanceStrip");
+  const p=computePortfolio(editingId);
+  const chips=[];
+  const cashChip=`<div class="bchip"><span class="bl">Available cash</span><span class="bv ${p.cash<0?'neg':''}">${fmtUSD(p.cash)}</span></div>`;
+  function heldChip(asset){
+    if(!asset) return "";
+    const pos=p.positions[asset.id]; const q=pos?pos.qty:0;
+    const pr=state.prices[asset.id]; const val=pr?q*pr.price:null;
+    return `<div class="bchip"><span class="bl">You hold · ${(asset.symbol||"").toUpperCase()}</span><span class="bv">${fmtNum(q)}${val!=null?` <small class="muted">(${fmtUSD(val)})</small>`:''}</span></div>`;
+  }
+  if(modalType==="DEPOSIT"||modalType==="WITHDRAW"){ chips.push(cashChip); }
+  else if(modalType==="BUY"){ chips.push(cashChip); if(pickedAsset) chips.push(heldChip(pickedAsset)); }
+  else if(modalType==="SELL"){ if(pickedAsset) chips.push(heldChip(pickedAsset)); chips.push(cashChip); }
+  else if(modalType==="ADJUST"){
+    if(adjTarget==="cash") chips.push(cashChip);
+    else { const sel=document.getElementById("adjAsset"); const a=sel&&sel.value?state.assets[sel.value]:null; chips.push(heldChip(a)); }
+  }
+  strip.innerHTML=chips.join("");
+}
+
+function updateAdjustCalc(){
+  if(modalType!=="ADJUST") return;
+  const el=document.getElementById("adjustCalc"), warn=document.getElementById("adjustWarn");
+  warn.innerHTML="";
+  const amt=parseFloat(document.getElementById("adjAmount").value)||0;
+  const p=computePortfolio(editingId);
+  if(adjTarget==="cash"){
+    const after = p.cash + (adjDir==="add"? amt : -amt);
+    el.innerHTML=`Cash ${adjDir==="add"?"→ increases":"→ decreases"} by <b>${fmtUSD(amt)}</b> &nbsp;·&nbsp; cash after: <b class="${after<0?'neg':''}">${fmtUSD(after)}</b>`;
+    if(adjDir==="remove" && amt>p.cash+1e-9) warn.innerHTML=`<div class="warn">You can't remove more than your available cash (${fmtUSD(p.cash)}).</div>`;
+    else el.innerHTML+=` <small class="muted">— counts toward return, not net capital (use Deposit/Withdraw for your own capital).</small>`;
+  } else {
+    const sel=document.getElementById("adjAsset"); const a=sel&&sel.value?state.assets[sel.value]:null;
+    const held=a? (p.positions[a.id]?p.positions[a.id].qty:0) : 0;
+    const after = held + (adjDir==="add"? amt : -amt);
+    el.innerHTML= a? `${(a.symbol||"").toUpperCase()} ${adjDir==="add"?"+":"−"}${fmtNum(amt)} units &nbsp;·&nbsp; holding after: <b>${fmtNum(after)}</b>` : "Pick a holding to adjust.";
+    if(a && adjDir==="remove" && amt>held+1e-9) warn.innerHTML=`<div class="warn">You only hold ${fmtNum(held)} units of ${(a.symbol||"").toUpperCase()}.</div>`;
+    else if(a && adjDir==="add") el.innerHTML+=` <small class="muted">— added at $0 cost (e.g. airdrop/bonus); raises equity/return.</small>`;
+    else if(a && adjDir==="remove") el.innerHTML+=` <small class="muted">— removed at average cost, no realized P&L.</small>`;
+  }
 }
 function toLocalInput(iso){
   const d=new Date(iso); const p=n=>String(n).padStart(2,"0");
@@ -681,14 +814,21 @@ function toLocalInput(iso){
 }
 
 function updateTradeCalc(){
+  updateBalanceStrip();
+  const cashWarn=document.getElementById("cashWarn"); cashWarn.innerHTML="";
+  if(modalType==="WITHDRAW"){
+    const amt=parseFloat(document.getElementById("cashAmount").value)||0;
+    const avail=computePortfolio(editingId).cash;
+    if(amt>avail+1e-9) cashWarn.innerHTML=`<div class="warn">You only have ${fmtUSD(avail)} in cash to withdraw.</div>`;
+  }
   const el=document.getElementById("tradeCalc"), warn=document.getElementById("tradeWarn");
   warn.innerHTML="";
-  if(modalType==="DEPOSIT"||modalType==="WITHDRAW"){ return; }
+  if(modalType==="DEPOSIT"||modalType==="WITHDRAW"||modalType==="ADJUST"){ return; }
   const qty=parseFloat(document.getElementById("qty").value)||0;
   const price=parseFloat(document.getElementById("price").value)||0;
   const fee=parseFloat(document.getElementById("fee").value)||0;
   const gross=qty*price;
-  const p=computePortfolio();
+  const p=computePortfolio(editingId);
   if(modalType==="BUY"){
     const total=gross+fee;
     el.innerHTML=`Cost: <b>${fmtUSD(total)}</b> (${fmtNum(qty)} × ${fmtUSD(price)}${fee?` + ${fmtUSD(fee)} fee`:''}) &nbsp;·&nbsp; cash after: <b class="${(p.cash-total)<0?'neg':''}">${fmtUSD(p.cash-total)}</b>`;
@@ -696,7 +836,7 @@ function updateTradeCalc(){
   }else{
     const proceeds=gross-fee;
     let basisSold=0, held=0;
-    if(pickedAsset){ const pos=p.holdings.find(h=>h.assetId===pickedAsset.id); if(pos){ basisSold=pos.avgCost*qty; held=heldQty(pickedAsset.id);} else held=heldQty(pickedAsset.id); }
+    if(pickedAsset){ const pos=p.positions[pickedAsset.id]; held = pos?pos.qty:0; const avg=pos&&pos.qty>0?pos.costBasis/pos.qty:0; basisSold=avg*qty; }
     const realized=proceeds-basisSold;
     el.innerHTML=`Proceeds: <b>${fmtUSD(proceeds)}</b> &nbsp;·&nbsp; realized P&L: <b class="${cls(realized)}">${sign(realized)}${fmtUSD(realized)}</b>`;
     if(pickedAsset && qty>held+1e-9) warn.innerHTML=`<div class="warn">You only hold ${fmtNum(held)} units of ${(pickedAsset.symbol||"").toUpperCase()}. Selling more than held isn't allowed.</div>`;
@@ -765,7 +905,25 @@ function saveTransaction(){
   if(modalType==="DEPOSIT"||modalType==="WITHDRAW"){
     const amount=parseFloat(document.getElementById("cashAmount").value);
     if(!(amount>0)){ toast("Enter a positive amount", true); return; }
+    if(modalType==="WITHDRAW"){
+      const avail=computePortfolio(editingId).cash;
+      if(amount>avail+1e-9){ toast(`Can't withdraw ${fmtUSD(amount)}; only ${fmtUSD(avail)} in cash`, true); return; }
+    }
     txn={type:modalType, amount, date, note};
+  }else if(modalType==="ADJUST"){
+    const amount=parseFloat(document.getElementById("adjAmount").value);
+    if(!(amount>0)){ toast("Enter a positive amount", true); return; }
+    const p=computePortfolio(editingId);
+    if(adjTarget==="cash"){
+      if(adjDir==="remove" && amount>p.cash+1e-9){ toast(`Can't remove ${fmtUSD(amount)}; only ${fmtUSD(p.cash)} in cash`, true); return; }
+      txn={type:"ADJUST", target:"cash", delta:(adjDir==="add"?amount:-amount), date, note};
+    }else{
+      const sel=document.getElementById("adjAsset"); const assetId=sel&&sel.value;
+      if(!assetId){ toast("No holding selected to adjust", true); return; }
+      const held=p.positions[assetId]?p.positions[assetId].qty:0;
+      if(adjDir==="remove" && amount>held+1e-9){ toast(`Can't remove ${fmtNum(amount)}; you only hold ${fmtNum(held)}`, true); return; }
+      txn={type:"ADJUST", target:"asset", assetId, qtyDelta:(adjDir==="add"?amount:-amount), date, note};
+    }
   }else{
     if(!pickedAsset){ toast("Search and pick an asset", true); return; }
     const qty=parseFloat(document.getElementById("qty").value);
@@ -774,10 +932,9 @@ function saveTransaction(){
     if(!(qty>0)){ toast("Enter a positive quantity", true); return; }
     if(!(price>0)){ toast("Enter a positive price", true); return; }
     if(modalType==="SELL"){
-      // validate against held qty, excluding the transaction being edited
-      let held=0;
-      for(const t of state.transactions){ if(t.id===editingId) continue; if(t.assetId!==pickedAsset.id) continue;
-        if(t.type==="BUY") held+=t.qty; else if(t.type==="SELL") held-=t.qty; }
+      // validate against held qty (incl. adjustments), excluding the transaction being edited
+      const pos=computePortfolio(editingId).positions[pickedAsset.id];
+      const held=pos?pos.qty:0;
       if(qty>held+1e-9){ toast(`Can't sell ${fmtNum(qty)}; you only hold ${fmtNum(held)}`, true); return; }
     }
     // register asset
@@ -847,7 +1004,20 @@ document.getElementById("assetSearch").addEventListener("input",e=>{
   clearTimeout(searchTimer); const q=e.target.value.trim(); searchTimer=setTimeout(()=>doAssetSearch(q),300);
 });
 ["qty","price","fee"].forEach(id=>document.getElementById(id).addEventListener("input",updateTradeCalc));
+document.getElementById("cashAmount").addEventListener("input",updateTradeCalc);
 document.getElementById("useLive").onclick=useLivePrice;
+
+// adjust controls
+document.getElementById("adjTargetSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  adjTarget=b.dataset.adj; setSeg("adjTargetSeg","adj",adjTarget); updateModalMode(); updateAdjustCalc();
+});
+document.getElementById("adjDirSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  adjDir=b.dataset.dir; setSeg("adjDirSeg","dir",adjDir); updateAdjustCalc();
+});
+document.getElementById("adjAmount").addEventListener("input",updateAdjustCalc);
+document.getElementById("adjAsset").addEventListener("change",()=>{ updateBalanceStrip(); updateAdjustCalc(); });
 
 // event delegation for ledger + dynamically-rendered buttons
 viewEl.addEventListener("click",e=>{

@@ -34,8 +34,17 @@ Deposit $3,000 → buy Intel $3,000 → sell Intel $2,500 (realized −$500) →
 
 ## Transactions
 
-- **Deposit / Withdraw** — move cash in/out (changes net capital).
+- **Deposit / Withdraw** — move cash in/out (changes net capital). You can't withdraw more cash than you have.
 - **Buy / Sell** — quantity × price (+ optional fee). Sells compute realized P&L on average cost. You can't sell more than you hold.
+- **Adjust** — reconcile a balance without it being a trade or your own capital:
+  - *Cash* — add or remove cash (dividends, interest, fees, corrections). This changes equity and therefore **counts toward return, not net capital**. (For your own money in/out, use Deposit/Withdraw.)
+  - *Holding quantity* — add units (airdrop/bonus, brought in at $0 cost) or remove units (transfer-out/correction, removed at average cost with no realized P&L).
+
+  Adjustments only allow logical changes: you can't remove more cash or more units than you currently have.
+
+### Available balances while adding a transaction
+
+The transaction dialog shows the relevant balances for what you're doing: **available cash** for Deposit/Withdraw/Buy and cash adjustments, and **units you hold** (with their live value) for Buy/Sell and holding adjustments. Over-withdrawing, over-selling, or over-removing is blocked with a clear message.
 
 ## Live prices
 
