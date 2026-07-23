@@ -488,12 +488,17 @@ function holdingsTable(p, compact){
       <td>${h.marketValue!=null?fmtUSD(h.marketValue):'<span class="muted">—</span>'}</td>
       <td class="${h.unrealized!=null?cls(h.unrealized):''}">${h.unrealized!=null?sign(h.unrealized)+fmtUSD(h.unrealized)+(uPnlPct!=null?` <small>(${fmtPct(uPnlPct)})</small>`:''):'<span class="muted">—</span>'}</td>
       <td>${beCell}</td>
-      ${compact?`<td style="width:120px"><div class="bar"><i style="width:${Math.min(100,pct).toFixed(1)}%"></i></div><small class="muted">${pct.toFixed(1)}%</small></td>`:''}
+      ${compact?`<td style="width:110px"><div class="bar"><i style="width:${Math.min(100,pct).toFixed(1)}%"></i></div><small class="muted">${pct.toFixed(1)}%</small></td>`:''}
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn sm" data-buy="${h.assetId}" title="Buy more ${(h.asset.symbol||'').toUpperCase()}">＋ Buy</button>
+        <button class="btn sm" data-sell="${h.assetId}" title="Sell some ${(h.asset.symbol||'').toUpperCase()}">－ Sell</button>
+        <button class="btn sm" data-close="${h.assetId}" title="Sell your entire ${(h.asset.symbol||'').toUpperCase()} position">Close</button>
+      </td>
     </tr>`;
   }).join("");
   return `<table><thead><tr>
     <th>Asset</th><th>Qty</th><th>Avg cost</th><th>Cost basis</th><th>Live price</th><th>Market value</th><th>Unrealized P&L</th>
-    <th title="Price this asset must reach for total equity to equal your net capital, with cash and other holdings held constant">Break-even <small>(net cap)</small></th>${compact?'<th>Weight</th>':''}
+    <th title="Price this asset must reach for total equity to equal your net capital, with cash and other holdings held constant">Break-even <small>(net cap)</small></th>${compact?'<th>Weight</th>':''}<th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
@@ -706,9 +711,11 @@ const overlay = document.getElementById("txOverlay");
 let modalType="DEPOSIT", modalAssetType="crypto", pickedAsset=null, editingId=null, searchTimer=null;
 let adjTarget="cash", adjDir="add";
 
+// txn: pass an existing transaction (with id) to edit, or a prefill object
+// {type, assetId, qty?, price?} with no id to start a new one pre-filled.
 function openModal(txn){
-  editingId = txn? txn.id : null;
-  document.getElementById("txTitle").textContent = txn? "Edit transaction" : "Add transaction";
+  editingId = (txn && txn.id) ? txn.id : null;
+  document.getElementById("txTitle").textContent = editingId ? "Edit transaction" : "Add transaction";
   // defaults
   modalType = txn? txn.type : "DEPOSIT";
   modalAssetType = txn && txn.assetId && state.assets[txn.assetId] ? state.assets[txn.assetId].type : "crypto";
@@ -1019,9 +1026,26 @@ document.getElementById("adjDirSeg").addEventListener("click",e=>{
 document.getElementById("adjAmount").addEventListener("input",updateAdjustCalc);
 document.getElementById("adjAsset").addEventListener("change",()=>{ updateBalanceStrip(); updateAdjustCalc(); });
 
+// Open a pre-filled new transaction for a specific holding.
+function openHoldingTxn(assetId, type, closeAll){
+  const asset=state.assets[assetId]; if(!asset) return;
+  const prefill={type, assetId};
+  const pr=state.prices[assetId];
+  if(pr) prefill.price=pr.price;                 // convenience: start at the live price
+  if(closeAll){
+    const pos=computePortfolio().positions[assetId];
+    prefill.qty = pos? pos.qty : 0;              // sell the whole position
+  }
+  openModal(prefill);
+}
+
 // event delegation for ledger + dynamically-rendered buttons
 viewEl.addEventListener("click",e=>{
   const ed=e.target.closest("[data-edit]"); const del=e.target.closest("[data-del]");
+  const buy=e.target.closest("[data-buy]"), sell=e.target.closest("[data-sell]"), close=e.target.closest("[data-close]");
+  if(buy){ openHoldingTxn(buy.dataset.buy,"BUY",false); return; }
+  if(sell){ openHoldingTxn(sell.dataset.sell,"SELL",false); return; }
+  if(close){ openHoldingTxn(close.dataset.close,"SELL",true); return; }
   if(ed){ const t=state.transactions.find(x=>x.id===ed.dataset.edit); if(t) openModal(t); return; }
   if(del){ const id=del.dataset.del; if(confirm("Delete this transaction?")){ state.transactions=state.transactions.filter(x=>x.id!==id); save(); render(); toast("Deleted"); } return; }
   if(e.target.id==="exportBtn") exportData();

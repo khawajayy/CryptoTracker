@@ -42,6 +42,16 @@ Deposit $3,000 → buy Intel $3,000 → sell Intel $2,500 (realized −$500) →
 
   Adjustments only allow logical changes: you can't remove more cash or more units than you currently have.
 
+### Quick actions on a holding
+
+Every row in **Open positions** (dashboard) and **Holdings** has three buttons:
+
+- **＋ Buy** — add to that position (opens the dialog in Buy mode, pre-filled with the asset and its live price).
+- **－ Sell** — reduce it (Sell mode, asset + live price pre-filled, quantity left blank).
+- **Close** — exit the whole position (Sell mode, pre-filled with your full quantity and the live price, so one confirm closes it).
+
+Each opens the normal transaction dialog, so you still see the balances, proceeds, and realized P&L before saving.
+
 ### Available balances while adding a transaction
 
 The transaction dialog shows the relevant balances for what you're doing: **available cash** for Deposit/Withdraw/Buy and cash adjustments, and **units you hold** (with their live value) for Buy/Sell and holding adjustments. Over-withdrawing, over-selling, or over-removing is blocked with a clear message.
