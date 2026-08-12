@@ -62,6 +62,18 @@ The transaction dialog shows the relevant balances for what you're doing: **avai
 - **Stocks** — Finnhub. Paste a free key in **Settings** (get one at https://finnhub.io/register). Without a key, stock live prices are skipped (everything else still works, and you can enter prices manually).
 - Manual **Refresh** button + optional auto-refresh in Settings. Last-known prices are cached.
 
+## Portfolio mode vs Goal mode
+
+A toggle at the top switches between two separate modes:
+
+- **Portfolio** — everything above (dashboard, holdings, ledger, settings).
+- **Goal** — set a target portfolio value and track progress toward it:
+  - An elegant **progress ring** showing current equity as a % of the goal.
+  - **Goal target**, **current equity**, **remaining to goal**, and **total gain still needed** (all with PKR equivalents).
+  - **Winning trades needed** — pick an expected profit % per trade and it computes, by compounding, how many such trades grow your current equity to the goal (`n = ⌈ln(goal / equity) / ln(1 + pct/100)⌉`), with a small step-by-step projection. When equity reaches the target, a "Goal reached" banner appears.
+
+  The goal and the mode you're in are saved. Goal mode is fully separate from Portfolio mode.
+
 ## Break-even vs net capital
 
 The Holdings table shows a **Break-even (net cap)** column: the price each holding must reach for your **total equity to equal your net capital**, with cash and every other position held constant.

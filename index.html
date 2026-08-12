@@ -43,6 +43,28 @@
   .tabs{display:flex;gap:6px;background:var(--panel2);border:1px solid var(--border);padding:5px;border-radius:12px;width:max-content;margin-bottom:18px;flex-wrap:wrap}
   .tab{padding:8px 16px;border-radius:9px;color:var(--muted);font-weight:600}
   .tab.active{background:var(--chip);color:var(--text)}
+  .modeseg{display:flex;gap:4px;background:var(--panel2);border:1px solid var(--border);padding:4px;border-radius:11px}
+  .modeseg button{background:transparent;border:none;color:var(--muted);padding:7px 16px;border-radius:8px;font-weight:700;font-size:13px}
+  .modeseg button.active{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:var(--shadow)}
+  /* goal mode */
+  .goalwrap{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:16px;align-items:start}
+  @media(max-width:760px){.goalwrap{grid-template-columns:1fr}}
+  .ringcard{display:flex;flex-direction:column;align-items:center;gap:6px;padding:26px 20px}
+  .ring{position:relative;width:230px;height:230px}
+  .ring svg{transform:rotate(-90deg)}
+  .ring .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .ring .pctbig{font-size:44px;font-weight:900;line-height:1;letter-spacing:-.5px}
+  .ring .pctsub{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .goalstat{display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid rgba(33,42,59,.6)}
+  .goalstat:last-child{border-bottom:none}
+  .goalstat .k{color:var(--muted);font-size:13px}
+  .goalstat .v{font-weight:800;font-size:17px}
+  .goalstat .v small{font-weight:500;color:var(--muted);display:block;text-align:right;font-size:11.5px}
+  .bignum{font-size:30px;font-weight:900}
+  .reached{background:linear-gradient(135deg,rgba(34,197,94,.15),rgba(34,197,94,.05));border:1px solid #1f5b37;color:#7ee2a4;padding:12px 14px;border-radius:12px;font-weight:700;text-align:center}
+  .miniproj{width:100%;margin-top:6px}
+  .miniproj td{padding:6px 8px;text-align:right;font-size:12.5px}
+  .miniproj td:first-child{text-align:left;color:var(--muted)}
   .grid{display:grid;gap:14px}
   .cards{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
   .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px 14px;box-shadow:var(--shadow)}
@@ -116,6 +138,10 @@
 <div class="wrap">
   <header class="app">
     <div class="logo"><span class="dot"></span> CryptoLedger</div>
+    <div class="modeseg" id="modeSeg">
+      <button data-mode="portfolio" class="active">Portfolio</button>
+      <button data-mode="goal">Goal</button>
+    </div>
     <span class="tag" id="apiStatus">prices: idle</span>
     <span class="tag" id="fxStatus"></span>
     <div class="spacer"></div>
@@ -262,7 +288,8 @@ function defaultState(){
     prices: {},                       // assetId -> {price,updatedAt}
     settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR", manualRate:null },
     fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
-    ui: { view:"dashboard" }
+    goal: { target:null, profitPct:10 },            // goal-mode target and per-trade profit %
+    ui: { view:"dashboard", mode:"portfolio" }      // mode: "portfolio" | "goal"
   };
 }
 function load(){
@@ -274,7 +301,8 @@ function load(){
     return Object.assign(d, s, {
       settings: Object.assign(d.settings, s.settings||{}),
       fx: Object.assign(d.fx, s.fx||{}),
-      ui: Object.assign({view:"dashboard"}, s.ui||{})
+      goal: Object.assign(d.goal, s.goal||{}),
+      ui: Object.assign({view:"dashboard", mode:"portfolio"}, s.ui||{})
     });
   }catch(e){ return defaultState(); }
 }
@@ -412,12 +440,124 @@ function heldAssets(excludeId){
 /* ---------- rendering ---------- */
 const viewEl = document.getElementById("view");
 function render(){
+  const mode = state.ui.mode || "portfolio";
+  document.querySelectorAll("#modeSeg button").forEach(b=>b.classList.toggle("active", b.dataset.mode===mode));
+  document.getElementById("tabs").style.display = mode==="goal" ? "none" : "";
+  if(mode==="goal"){ renderGoal(); return; }
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.view===state.ui.view));
   const v = state.ui.view;
   if(v==="dashboard") renderDashboard();
   else if(v==="holdings") renderHoldings();
   else if(v==="ledger") renderLedger();
   else if(v==="settings") renderSettings();
+}
+
+// number of compounding X%-profit trades to grow `from` up to `to`
+function tradesToGoal(from, to, pct){
+  if(!(from>0) || !(to>from) || !(pct>0)) return null;
+  return Math.ceil(Math.log(to/from) / Math.log(1 + pct/100));
+}
+
+function renderGoal(){
+  const p = computePortfolio();
+  const g = state.goal || {target:null, profitPct:10};
+  const equity = p.equity;
+
+  if(!(g.target>0)){
+    viewEl.innerHTML = `
+      <div class="panel" style="max-width:520px;margin:0 auto">
+        <h2>🎯 Set your goal</h2>
+        <div style="padding:18px">
+          <p class="muted" style="margin-top:0">Pick a target portfolio value. Goal mode then shows how far your current equity (${fmtUSD(equity)}) is from it, and how many winning trades it takes to get there.</p>
+          <div class="field"><label>Goal target (USD)</label><input type="number" id="goalTarget" step="any" min="0" placeholder="e.g. 10000" /></div>
+          <div class="field"><label>Expected profit per winning trade (%)</label><input type="number" id="goalPct" step="any" min="0" value="${g.profitPct||10}" /></div>
+          <button class="btn primary" id="goalSave">Set goal</button>
+        </div>
+      </div>`;
+    document.getElementById("goalSave").onclick=()=>{
+      const t=parseFloat(document.getElementById("goalTarget").value);
+      const pc=parseFloat(document.getElementById("goalPct").value)||10;
+      if(!(t>0)){ toast("Enter a positive goal amount", true); return; }
+      state.goal={target:t, profitPct:pc}; save(); render(); toast("Goal set");
+    };
+    return;
+  }
+
+  const target = g.target, pct = g.profitPct||10;
+  const remaining = target - equity;
+  const progress = Math.max(0, Math.min(100, equity/target*100));
+  const reached = equity >= target - 1e-9;
+  const gainNeededPct = equity>0 ? (target/equity - 1)*100 : null;
+  const nTrades = tradesToGoal(equity, target, pct);
+
+  // progress ring geometry
+  const R=100, C=2*Math.PI*R, off=C*(1-progress/100);
+  const ringColor = reached ? "var(--green)" : "url(#gGrad)";
+
+  // small projection table (first few compounding steps toward goal)
+  let proj="";
+  if(!reached && nTrades){
+    const rows=[]; let e=equity; const steps=Math.min(nTrades,6);
+    for(let i=1;i<=steps;i++){ e=e*(1+pct/100); rows.push(`<tr><td>after trade ${i}</td><td>${fmtUSD(e)}</td><td class="muted">${Math.min(100,e/target*100).toFixed(0)}%</td></tr>`); }
+    if(nTrades>steps) rows.push(`<tr><td>…</td><td>…</td><td></td></tr><tr><td>after trade ${nTrades}</td><td>${fmtUSD(equity*Math.pow(1+pct/100,nTrades))}</td><td class="muted">100%</td></tr>`);
+    proj=`<table class="miniproj"><tbody>${rows.join("")}</tbody></table>`;
+  }
+
+  viewEl.innerHTML = `
+    <div class="goalwrap">
+      <div class="panel ringcard">
+        <div class="ring">
+          <svg width="230" height="230" viewBox="0 0 230 230">
+            <defs><linearGradient id="gGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#4f8cff"/><stop offset="100%" stop-color="#7c5cff"/>
+            </linearGradient></defs>
+            <circle cx="115" cy="115" r="${R}" fill="none" stroke="var(--chip)" stroke-width="16"/>
+            <circle cx="115" cy="115" r="${R}" fill="none" stroke="${ringColor}" stroke-width="16" stroke-linecap="round"
+              stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
+          </svg>
+          <div class="center">
+            <div class="pctbig ${reached?'pos':''}">${progress.toFixed(1)}%</div>
+            <div class="pctsub">of ${fmtUSD(target)}</div>
+          </div>
+        </div>
+        <div class="muted" style="text-align:center;font-size:13px">Current equity <b style="color:var(--text)">${fmtUSD(equity)}</b></div>
+      </div>
+
+      <div class="panel" style="padding:20px">
+        <h2 style="padding:0 0 14px;border:none;margin:0">🎯 Goal progress</h2>
+        ${reached ? `<div class="reached">🎉 Goal reached! Your equity of ${fmtUSD(equity)} has hit your ${fmtUSD(target)} target.</div>` : ``}
+        <div class="goalstat"><span class="k">Goal target</span><span class="v">${fmtUSD(target)}${fmtSec(target)?`<small>${fmtSec(target)}</small>`:''}</span></div>
+        <div class="goalstat"><span class="k">Current equity</span><span class="v">${fmtUSD(equity)}${fmtSec(equity)?`<small>${fmtSec(equity)}</small>`:''}</span></div>
+        <div class="goalstat"><span class="k">${reached?'Surplus over goal':'Remaining to goal'}</span><span class="v ${reached?'pos':''}">${fmtUSD(Math.abs(remaining))}${fmtSec(Math.abs(remaining))?`<small>${fmtSec(Math.abs(remaining))}</small>`:''}</span></div>
+        ${!reached && gainNeededPct!=null?`<div class="goalstat"><span class="k">Total gain still needed</span><span class="v">${gainNeededPct.toFixed(1)}%</span></div>`:''}
+
+        ${!reached ? `
+        <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
+          <div class="flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <span class="k muted">Winning trades needed at</span>
+            <span><input type="number" id="goalPctLive" value="${pct}" step="any" min="0" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:8px;text-align:right"> % each</span>
+          </div>
+          <div style="text-align:center;margin:14px 0 4px">
+            <span class="bignum">${nTrades!=null?`≈ ${nTrades}`:'—'}</span>
+            <span class="muted"> ${nTrades===1?'trade':'trades'}</span>
+          </div>
+          <div class="muted" style="text-align:center;font-size:12px">compounding ${pct}% profit each, reinvested, to grow ${fmtUSD(equity)} → ${fmtUSD(target)}</div>
+          ${proj}
+        </div>` : ``}
+
+        <div class="flex" style="margin-top:18px;gap:10px">
+          <button class="btn sm" id="goalEdit">Edit goal</button>
+          <button class="btn sm" id="goalClear">Clear goal</button>
+        </div>
+      </div>
+    </div>`;
+
+  const live=document.getElementById("goalPctLive");
+  if(live) live.addEventListener("input",()=>{
+    const v=parseFloat(live.value); if(v>0){ state.goal.profitPct=v; save(); renderGoal(); document.getElementById("goalPctLive").focus(); }
+  });
+  document.getElementById("goalEdit").onclick=()=>{ const t=state.goal.target; state.goal.target=null; save(); renderGoal(); const gt=document.getElementById("goalTarget"); if(gt) gt.value=t; };
+  document.getElementById("goalClear").onclick=()=>{ if(confirm("Clear your goal?")){ state.goal={target:null,profitPct:state.goal.profitPct||10}; save(); render(); toast("Goal cleared"); } };
 }
 
 function renderDashboard(){
@@ -988,6 +1128,10 @@ function toast(msg, err){
 document.getElementById("tabs").addEventListener("click",e=>{
   const tab=e.target.closest(".tab"); if(!tab) return;
   state.ui.view=tab.dataset.view; save(); render();
+});
+document.getElementById("modeSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  state.ui.mode=b.dataset.mode; save(); render();
 });
 document.getElementById("addBtn").onclick=()=>openModal(null);
 document.getElementById("refreshBtn").onclick=refreshPrices;
