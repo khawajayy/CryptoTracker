@@ -272,6 +272,19 @@
 
 const LS_KEY = "cryptoledger.v1";
 const fmtUSD = (n) => (n<0?"-$":"$") + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+// Per-unit price formatter: keeps precision for small (sub-cent) prices so cheap
+// tokens don't collapse to "$0.00". Used for prices/avg cost, not for USD totals.
+function fmtPrice(n){
+  const a=Math.abs(n); if(a===0) return "$0.00";
+  const sgn=n<0?"-$":"$";
+  if(a>=1)    return sgn+a.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(a>=0.01) return sgn+a.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});
+  // sub-cent: show 4 significant figures, no scientific notation, trim trailing zeros
+  let s=a.toPrecision(4);
+  if(s.indexOf("e")>=0){ s=a.toFixed(20); }
+  s=s.replace(/(\.\d*?)0+$/,"$1").replace(/\.$/,"");
+  return sgn+s;
+}
 const fmtNum = (n,d=6) => Number(n).toLocaleString(undefined,{maximumFractionDigits:d});
 const fmtPct = (n) => (n>=0?"+":"") + n.toFixed(2) + "%";
 const uid = () => Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4);
@@ -616,15 +629,15 @@ function holdingsTable(p, compact){
     else{
       let sub='';
       if(h.live!=null){ const mv=(be/h.live-1)*100; sub=` <small class="${mv>0?'neg':'pos'}">(${mv>0?'+':''}${mv.toFixed(1)}%)</small>`; }
-      beCell = fmtUSD(be)+sub;
+      beCell = fmtPrice(be)+sub;
     }
     return `<tr>
       <td><div class="sym"><div class="badge">${badge}</div>
         <div class="meta">${(h.asset.symbol||"").toUpperCase()} <span class="tag ${h.asset.type}">${h.asset.type}</span><small>${h.asset.name||""}</small></div></div></td>
       <td>${fmtNum(h.qty)}</td>
-      <td>${fmtUSD(h.avgCost)}</td>
+      <td>${fmtPrice(h.avgCost)}</td>
       <td>${fmtUSD(h.costBasis)}</td>
-      <td>${h.live!=null?fmtUSD(h.live):'<span class="muted">—</span>'}</td>
+      <td>${h.live!=null?fmtPrice(h.live):'<span class="muted">—</span>'}</td>
       <td>${h.marketValue!=null?fmtUSD(h.marketValue):'<span class="muted">—</span>'}</td>
       <td class="${h.unrealized!=null?cls(h.unrealized):''}">${h.unrealized!=null?sign(h.unrealized)+fmtUSD(h.unrealized)+(uPnlPct!=null?` <small>(${fmtPct(uPnlPct)})</small>`:''):'<span class="muted">—</span>'}</td>
       <td>${beCell}</td>
@@ -665,7 +678,7 @@ function renderLedger(){
     else{
       const a=state.assets[t.assetId]||{symbol:t.assetId};
       const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
-      detail=`${fmtNum(t.qty)} ${(a.symbol||"").toUpperCase()} @ ${fmtUSD(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+      detail=`${fmtNum(t.qty)} ${(a.symbol||"").toUpperCase()} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
       amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
     }
     return `<tr>
@@ -978,7 +991,7 @@ function updateTradeCalc(){
   const p=computePortfolio(editingId);
   if(modalType==="BUY"){
     const total=gross+fee;
-    el.innerHTML=`Cost: <b>${fmtUSD(total)}</b> (${fmtNum(qty)} × ${fmtUSD(price)}${fee?` + ${fmtUSD(fee)} fee`:''}) &nbsp;·&nbsp; cash after: <b class="${(p.cash-total)<0?'neg':''}">${fmtUSD(p.cash-total)}</b>`;
+    el.innerHTML=`Cost: <b>${fmtUSD(total)}</b> (${fmtNum(qty)} × ${fmtPrice(price)}${fee?` + ${fmtUSD(fee)} fee`:''}) &nbsp;·&nbsp; cash after: <b class="${(p.cash-total)<0?'neg':''}">${fmtUSD(p.cash-total)}</b>`;
     if(total>p.cash+1e-9) warn.innerHTML=`<div class="warn">This buy exceeds your available cash (${fmtUSD(p.cash)}). It's allowed, but your cash will go negative.</div>`;
   }else{
     const proceeds=gross-fee;
@@ -1039,7 +1052,7 @@ async function useLivePrice(){
       const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(pickedAsset.symbol)}&token=${encodeURIComponent(key)}`);
       const j=await r.json(); price=j.c;
     }
-    if(price>0){ document.getElementById("price").value=price; updateTradeCalc(); toast(`Live ${pickedAsset.symbol}: ${fmtUSD(price)}`); }
+    if(price>0){ document.getElementById("price").value=price; updateTradeCalc(); toast(`Live ${pickedAsset.symbol}: ${fmtPrice(price)}`); }
     else toast("Couldn't get a live price", true);
   }catch(e){ toast("Live price failed: "+e.message, true); }
 }
@@ -1174,8 +1187,8 @@ document.getElementById("adjAsset").addEventListener("change",()=>{ updateBalanc
 function openHoldingTxn(assetId, type, closeAll){
   const asset=state.assets[assetId]; if(!asset) return;
   const prefill={type, assetId};
-  const pr=state.prices[assetId];
-  if(pr) prefill.price=pr.price;                 // convenience: start at the live price
+  // Note: price is left blank on purpose — you enter the price you actually
+  // bought/sold at. Use the "Use live price" button if you want the market price.
   if(closeAll){
     const pos=computePortfolio().positions[assetId];
     prefill.qty = pos? pos.qty : 0;              // sell the whole position

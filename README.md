@@ -46,11 +46,13 @@ Deposit $3,000 → buy Intel $3,000 → sell Intel $2,500 (realized −$500) →
 
 Every row in **Open positions** (dashboard) and **Holdings** has three buttons:
 
-- **＋ Buy** — add to that position (opens the dialog in Buy mode, pre-filled with the asset and its live price).
-- **－ Sell** — reduce it (Sell mode, asset + live price pre-filled, quantity left blank).
-- **Close** — exit the whole position (Sell mode, pre-filled with your full quantity and the live price, so one confirm closes it).
+- **＋ Buy** — add to that position (opens the dialog in Buy mode for that asset).
+- **－ Sell** — reduce it (Sell mode for that asset).
+- **Close** — exit the whole position (Sell mode, pre-filled with your full quantity).
 
-Each opens the normal transaction dialog, so you still see the balances, proceeds, and realized P&L before saving.
+The **price is left blank** so you enter the price you actually bought/sold at; click **Use live price** if you want the current market price instead. Each opens the normal transaction dialog, so you still see the balances, proceeds, and realized P&L before saving.
+
+Prices are shown with full precision for cheap tokens (e.g. `$0.0000123`), so sub-cent coins don't display as `$0.00`.
 
 ### Available balances while adding a transaction
 
