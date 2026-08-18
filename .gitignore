@@ -7,3 +7,9 @@ Thumbs.db
 
 # local backups exported from the app
 cryptoledger-backup-*.json
+
+# Firebase CLI cache / logs / local installs
+.firebase/
+firebase-debug.log
+firestore-debug.log
+node_modules/

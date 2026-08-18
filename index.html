@@ -144,6 +144,7 @@
     </div>
     <span class="tag" id="apiStatus">prices: idle</span>
     <span class="tag" id="fxStatus"></span>
+    <span class="tag" id="cloudStatus" style="display:none"></span>
     <div class="spacer"></div>
     <div class="toolbar">
       <button class="btn" id="refreshBtn">↻ Refresh prices</button>
@@ -305,21 +306,79 @@ function defaultState(){
     ui: { view:"dashboard", mode:"portfolio" }      // mode: "portfolio" | "goal"
   };
 }
+function normalizeState(s, keepUi){
+  const d = defaultState();
+  return Object.assign(d, s, {
+    settings: Object.assign(d.settings, s.settings||{}),
+    fx: Object.assign(d.fx, s.fx||{}),
+    goal: Object.assign(d.goal, s.goal||{}),
+    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio"}, s.ui||{})
+  });
+}
 function load(){
   try{
     const raw = localStorage.getItem(LS_KEY);
     if(!raw) return defaultState();
-    const s = JSON.parse(raw);
-    const d = defaultState();
-    return Object.assign(d, s, {
-      settings: Object.assign(d.settings, s.settings||{}),
-      fx: Object.assign(d.fx, s.fx||{}),
-      goal: Object.assign(d.goal, s.goal||{}),
-      ui: Object.assign({view:"dashboard", mode:"portfolio"}, s.ui||{})
-    });
+    return normalizeState(JSON.parse(raw));
   }catch(e){ return defaultState(); }
 }
-function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function save(){
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+  if(window.Cloud && window.Cloud.onLocalSave) window.Cloud.onLocalSave();  // debounced cloud push
+}
+
+/* ---------- cloud sync bridge (used by the Firebase module at the bottom) ---------- */
+// Default stub so Settings buttons never error before the module loads / when offline.
+window.Cloud = window.Cloud || { configured:false, signedIn:false, email:null, status:"",
+  signIn:function(){ toast("Cloud sync isn't configured yet", true); }, signOut:function(){}, onLocalSave:null };
+// The subset of state that is synced (device-local things like ui & prices stay local).
+function getCloudPayload(){
+  return { transactions:state.transactions, assets:state.assets, settings:state.settings, goal:state.goal, updatedAt:Date.now() };
+}
+function getLocalTxnCount(){ return (state.transactions||[]).length; }
+// Apply a state object arriving from the cloud, preserving this device's view/mode & live prices.
+function applyCloudState(remote){
+  state = normalizeState({
+    transactions: remote.transactions||[],
+    assets: remote.assets||{},
+    settings: Object.assign({}, state.settings, remote.settings||{}),
+    goal: remote.goal || state.goal,
+    fx: state.fx,
+    prices: state.prices
+  }, state.ui);
+  localStorage.setItem(LS_KEY, JSON.stringify(state));   // cache only — do NOT echo back to cloud
+  render(); updateFxChip();
+}
+window.getCloudPayload=getCloudPayload; window.getLocalTxnCount=getLocalTxnCount; window.applyCloudState=applyCloudState;
+// Header chip + the Settings cloud panel, refreshed whenever cloud state changes.
+function setCloudStatus(text){
+  const c = window.Cloud||{}; if(text!=null) c.status=text;
+  const el=document.getElementById("cloudStatus");
+  if(el){
+    el.textContent = c.signedIn ? ("☁ "+(c.status||"synced")) : (c.configured ? "☁ sign in to sync" : "");
+    el.style.display = el.textContent ? "" : "none";
+  }
+  renderCloudBox();
+}
+function renderCloudBox(){
+  const box=document.getElementById("cloudBox"); if(!box) return;
+  const c=window.Cloud||{};
+  if(!c.configured){
+    box.innerHTML=`<div class="warn">Cloud sync isn't set up yet. Add your Firebase config to <code>index.html</code> and deploy — see the README's "Cloud sync" section. Until then, data stays on this device only.</div>`;
+    return;
+  }
+  if(c.signedIn){
+    box.innerHTML=`<div class="flex" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>Signed in as <b>${c.email||"account"}</b><div class="hint" style="margin-top:2px">Status: ${c.status||"synced"} · changes sync automatically across your devices.</div></div>
+      <button class="btn sm" id="cloudSignOut">Sign out</button></div>`;
+    const b=box.querySelector("#cloudSignOut"); if(b) b.onclick=()=>window.Cloud.signOut();
+  } else {
+    box.innerHTML=`<button class="btn primary" id="cloudSignIn">Sign in with Google</button>
+      <div class="hint" style="margin-top:8px">Sign in to sync your ledger across all your devices in real time.${c.status?` (${c.status})`:""}</div>`;
+    const b=box.querySelector("#cloudSignIn"); if(b) b.onclick=()=>window.Cloud.signIn();
+  }
+}
+window.setCloudStatus=setCloudStatus; window.renderCloudBox=renderCloudBox;
 
 /* ---------- secondary currency (e.g. PKR) ---------- */
 function secCode(){ return (state.settings && state.settings.secondaryCurrency) || "PKR"; }
@@ -711,6 +770,11 @@ function renderSettings(){
       <h2>Settings</h2>
       <div style="padding:18px">
         <div class="field">
+          <label>☁ Cloud sync</label>
+          <div id="cloudBox"></div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:18px 0">
+        <div class="field">
           <label>Finnhub API key (for live stock prices)</label>
           <input type="text" id="setKey" value="${(s.finnhubKey||"").replace(/"/g,'&quot;')}" placeholder="paste your free key" />
           <div class="hint">Get a free key at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>. Crypto prices via CoinGecko need no key.</div>
@@ -754,6 +818,7 @@ function renderSettings(){
         <div class="warn" style="margin-top:16px">Your data is stored only in this browser (localStorage). Use <b>Export JSON</b> in the Ledger tab to back it up.</div>
       </div>
     </div>`;
+  renderCloudBox();
   document.getElementById("setRefresh").value = String(s.autoRefreshSec||0);
   document.getElementById("setCurrency").value = secCode();
   const manualChk = document.getElementById("setManual");
@@ -1217,6 +1282,110 @@ setupAutoRefresh();
 updateFxChip();
 fetchFx().then(()=>render());          // load USD->secondary rate, then show PKR lines
 if(state.transactions.length) refreshPrices();
+</script>
+
+<!-- =====================================================================
+     CLOUD SYNC (Firebase). Paste your project's config in firebaseConfig
+     below, then deploy (see README "Cloud sync"). Safe to commit — these
+     values are not secrets; access is guarded by Auth + Firestore rules.
+     ===================================================================== -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
+         setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+// ============ PASTE YOUR FIREBASE CONFIG HERE ============
+const firebaseConfig = {
+  apiKey: "PASTE_API_KEY",
+  authDomain: "PASTE_PROJECT.firebaseapp.com",
+  projectId: "PASTE_PROJECT_ID",
+  storageBucket: "PASTE_PROJECT.appspot.com",
+  messagingSenderId: "PASTE_SENDER_ID",
+  appId: "PASTE_APP_ID"
+};
+// ========================================================
+
+const configured = !String(firebaseConfig.apiKey).startsWith("PASTE_");
+window.Cloud = Object.assign(window.Cloud||{}, { configured, signedIn:false, email:null, status:"" });
+
+if(!configured){
+  window.setCloudStatus && window.setCloudStatus("");
+}else{
+  try{
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+    let ref=null, unsub=null, pushTimer=null, applying=false, lastPushedAt=0;
+
+    window.Cloud.signIn = async ()=>{
+      try{ await setPersistence(auth, browserLocalPersistence); await signInWithPopup(auth, provider); }
+      catch(e){ window.setCloudStatus("sign-in failed"); alert("Sign-in failed: "+(e.code||e.message)); }
+    };
+    window.Cloud.signOut = async ()=>{ try{ await signOut(auth); }catch(e){} };
+
+    function pushNow(){
+      if(!ref) return;
+      const payload = window.getCloudPayload();
+      lastPushedAt = payload.updatedAt;
+      setDoc(ref, payload).then(()=>window.setCloudStatus("synced"))
+                          .catch(()=>window.setCloudStatus("sync error"));
+    }
+    // called by save() on every local change
+    window.Cloud.onLocalSave = ()=>{
+      if(applying || !ref) return;
+      window.setCloudStatus("saving…");
+      clearTimeout(pushTimer); pushTimer=setTimeout(pushNow, 800);
+    };
+
+    function subscribe(){
+      if(unsub) unsub();
+      unsub = onSnapshot(ref, snap=>{
+        if(!snap.exists()) return;
+        if(snap.metadata.hasPendingWrites) return;              // ignore our own just-written change
+        const remote = snap.data();
+        if(remote.updatedAt && remote.updatedAt===lastPushedAt) return;  // echo of our write
+        applying=true;
+        try{ window.applyCloudState(remote); } finally{ applying=false; }
+        window.setCloudStatus("synced");
+      }, ()=>window.setCloudStatus("sync error"));
+    }
+
+    onAuthStateChanged(auth, async (user)=>{
+      if(user){
+        window.Cloud.signedIn=true; window.Cloud.email=user.email||user.displayName||"account";
+        ref = doc(db, "ledgers", user.uid);
+        window.setCloudStatus("connecting…");
+        try{
+          const snap = await getDoc(ref);
+          const remoteHasData = snap.exists() && (snap.data().transactions||[]).length>0;
+          const localHasData  = (window.getLocalTxnCount && window.getLocalTxnCount())>0;
+          if(remoteHasData && localHasData){
+            const useCloud = confirm("This account already has cloud data.\n\nOK = load the CLOUD data onto this device.\nCancel = upload THIS device's data to the cloud (overwrites cloud).");
+            if(useCloud){ applying=true; try{ window.applyCloudState(snap.data()); } finally{ applying=false; } }
+            else { pushNow(); }
+          } else if(remoteHasData){
+            applying=true; try{ window.applyCloudState(snap.data()); } finally{ applying=false; }
+          } else {
+            pushNow();               // first time on this account: upload what's here
+          }
+        }catch(e){ window.setCloudStatus("sync error"); }
+        subscribe();
+        window.setCloudStatus("synced");
+      }else{
+        window.Cloud.signedIn=false; window.Cloud.email=null;
+        if(unsub){ unsub(); unsub=null; } ref=null;
+        window.setCloudStatus("");
+      }
+    });
+  }catch(e){
+    window.Cloud.configured=false;
+    window.setCloudStatus && window.setCloudStatus("");
+    console.error("Cloud sync init failed:", e);
+  }
+}
+window.setCloudStatus && window.setCloudStatus(window.Cloud.status);
 </script>
 </body>
 </html>

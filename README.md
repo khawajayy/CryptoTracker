@@ -1,10 +1,47 @@
 # CryptoLedger
 
-A personal crypto **and** stocks trade ledger + portfolio tracker. Single HTML file, no build step, no server, no account. Your data lives only in your browser (localStorage).
+A personal crypto **and** stocks trade ledger + portfolio tracker. Single HTML file, no build step. Works fully offline (data in your browser's localStorage), with **optional cloud sync** (Firebase) so the same ledger follows you across devices.
 
 ## Run it
 
-Just **double-click `index.html`** (or open it in any browser). That's it.
+- **Offline / single device:** double-click `index.html` (or open it in any browser). Done.
+- **Synced across devices:** deploy it once to Firebase Hosting and open its URL anywhere — see **Cloud sync** below.
+
+## Cloud sync (Firebase) — one-time setup
+
+This makes your ledger sync in real time across every device. You do the Firebase setup once; the config values you paste are **not secrets** (access is protected by sign-in + security rules), so they're safe to commit.
+
+**1. Create a Firebase project**
+- Go to https://console.firebase.google.com → **Add project** → name it (e.g. `cryptoledger`) → create.
+
+**2. Enable Google sign-in**
+- In the project: **Build → Authentication → Get started → Sign-in method → Google → Enable** (pick a support email) → Save.
+
+**3. Create the database**
+- **Build → Firestore Database → Create database → Production mode →** pick a location → Enable.
+
+**4. Register a Web app and copy its config**
+- Project Overview → the **`</>`** (Web) icon → give it a nickname → Register.
+- Copy the `firebaseConfig` object it shows you.
+
+**5. Paste the config into the app**
+- Open `index.html`, find the `// ==== PASTE YOUR FIREBASE CONFIG HERE ====` block near the bottom, and replace the placeholder values with yours.
+- Put your project id into `.firebaserc` (replace `PASTE_PROJECT_ID`).
+
+**6. Deploy (installs the Firebase CLI if needed)**
+```bash
+npm install -g firebase-tools
+firebase login
+firebase deploy
+```
+This publishes the site **and** the Firestore security rules (`firestore.rules`, which lets each user read/write only their own data). The command prints your live URL, e.g. `https://your-project.web.app`.
+
+**7. Use it**
+- Open that URL on any device → **Settings → Cloud sync → Sign in with Google**. The first device uploads your existing data; other devices then load and stay in sync automatically. The header shows a `☁` status.
+
+Notes:
+- If you host somewhere other than Firebase Hosting, add that domain under **Authentication → Settings → Authorized domains**, or Google sign-in will be blocked.
+- Not configured / signed out? The app still works locally on that device exactly as before.
 
 ## The idea
 
