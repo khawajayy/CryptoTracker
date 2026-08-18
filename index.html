@@ -6,22 +6,36 @@
 <title>CryptoLedger — Portfolio & Trade Tracker</title>
 <style>
   :root{
+    /* light (classic paper) — the default */
     --bg:#ece6d8; --panel:#fbf9f3; --panel2:#f3eee1; --border:#d3cbb8;
-    --text:#2b2820; --muted:#7c7666; --accent:#1f6b46; --accent-dark:#175134; --accent2:#5b4636;
-    --green:#1c7a45; --red:#a52a2a; --amber:#8a6413; --chip:#efe9da;
+    --text:#2b2820; --muted:#726c5d; --accent:#1f6b46; --accent-dark:#175134; --accent2:#5b4636;
+    --green:#166a39; --red:#9e2424; --amber:#845d10; --chip:#efe9da;
+    --hover:#f4efe3; --input-bg:#ffffff; --btn-hover:#ffffff;
     --shadow:0 1px 2px rgba(60,52,35,.10);
     --radius:5px;
     --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  :root[data-theme="dark"]{
+    /* classic muted dark — no neon */
+    --bg:#191813; --panel:#242219; --panel2:#1f1d16; --border:#3b372c;
+    --text:#ece7d7; --muted:#a29a86; --accent:#4fa376; --accent-dark:#3c8460; --accent2:#b7a184;
+    --green:#5cb583; --red:#d97a7a; --amber:#cfa24f; --chip:#2c2920;
+    --hover:#2c2920; --input-bg:#201e17; --btn-hover:#302d23;
+    --shadow:0 1px 2px rgba(0,0,0,.45);
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{
     background:var(--bg);
     color:var(--text);
-    font:15px/1.55 var(--serif);
+    font:15.5px/1.6 var(--sans);
     font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
     min-height:100vh;
   }
+  /* serif reserved for the masthead, section titles and big display numbers */
+  .logo,.panel h2,.modal header h3,.card .value,.hero .big,.ring .pctbig,.bignum{font-family:var(--serif)}
   a{color:var(--accent);text-decoration:none}
   a:hover{text-decoration:underline}
   button{font:inherit;cursor:pointer}
@@ -34,9 +48,9 @@
   .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .btn{
     background:var(--panel);color:var(--text);border:1px solid var(--border);
-    padding:8px 14px;border-radius:var(--radius);font-weight:600;transition:.12s;display:inline-flex;gap:8px;align-items:center
+    padding:8px 14px;border-radius:var(--radius);font-weight:600;display:inline-flex;gap:8px;align-items:center
   }
-  .btn:hover{border-color:var(--muted);background:#fff}
+  .btn:hover{border-color:var(--muted);background:var(--btn-hover)}
   .btn.primary{background:var(--accent);border:1px solid var(--accent-dark);color:#fff}
   .btn.primary:hover{background:var(--accent-dark)}
   .btn.ghost{background:transparent}
@@ -89,7 +103,7 @@
   thead th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border);font-weight:700}
   tbody tr{border-bottom:1px solid var(--border)}
   tbody tr:last-child{border-bottom:none}
-  tbody tr:hover{background:#f6f1e6}
+  tbody tr:hover{background:var(--hover)}
   .sym{display:flex;align-items:center;gap:10px}
   .sym .badge{width:30px;height:30px;border-radius:4px;display:grid;place-items:center;font-weight:700;font-size:12px;background:var(--chip);border:1px solid var(--border);overflow:hidden}
   .sym .badge img{width:100%;height:100%;object-fit:cover}
@@ -110,7 +124,7 @@
   .modal .foot{padding:14px 18px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
   .field{margin-bottom:14px}
   .field label{display:block;font-size:12.5px;color:var(--muted);font-weight:600;margin-bottom:6px}
-  .field input,.field select{width:100%;background:#fff;border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:var(--radius)}
+  .field input,.field select{width:100%;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:var(--radius)}
   .field input:focus,.field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(31,107,70,.12)}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .seg{display:flex;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
@@ -119,7 +133,7 @@
   .seg button.active{background:var(--accent);color:#fff}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
   .calc{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-top:6px}
-  .search-results{border:1px solid var(--border);border-radius:var(--radius);margin-top:6px;max-height:190px;overflow:auto;display:none;background:#fff}
+  .search-results{border:1px solid var(--border);border-radius:var(--radius);margin-top:6px;max-height:190px;overflow:auto;display:none;background:var(--input-bg)}
   .search-results.open{display:block}
   .sr-item{padding:9px 12px;display:flex;gap:10px;align-items:center;cursor:pointer;border-bottom:1px solid var(--border)}
   .sr-item:hover{background:var(--panel2)}
@@ -127,7 +141,7 @@
   .iconbtn{background:transparent;border:none;color:var(--muted);padding:4px 7px;border-radius:4px;font-size:14px}
   .iconbtn:hover{background:var(--chip);color:var(--text)}
   .price-fresh{font-size:11px}
-  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);border:1px solid var(--text);color:var(--panel);padding:11px 18px;border-radius:var(--radius);box-shadow:0 6px 20px rgba(40,34,20,.3);z-index:80;opacity:0;transition:.25s;pointer-events:none}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);border:1px solid var(--text);color:var(--panel);padding:11px 18px;border-radius:var(--radius);box-shadow:0 6px 20px rgba(40,34,20,.3);z-index:80;opacity:0;transition:opacity .25s, transform .25s;pointer-events:none}
   .toast.show{opacity:1;transform:translate(-50%,-6px)}
   .toast.err{background:var(--red);border-color:var(--red)}
   .bar{height:7px;background:var(--chip);border:1px solid var(--border);border-radius:2px;overflow:hidden;margin-top:6px}
@@ -139,6 +153,12 @@
   .bchip{display:flex;flex-direction:column;gap:1px;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:7px 12px;min-width:110px}
   .bchip .bl{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
   .bchip .bv{font-size:15px;font-weight:700}
+  /* dark-theme tweaks for tinted elements */
+  :root[data-theme="dark"] .tag.crypto{color:#dab96a;border-color:#5a4c26;background:rgba(200,160,60,.12)}
+  :root[data-theme="dark"] .tag.stock{color:#8fb4dc;border-color:#33465c;background:rgba(120,160,210,.12)}
+  :root[data-theme="dark"] .tag.BUY{color:#8fb4dc} :root[data-theme="dark"] .tag.SELL{color:#d29ab8} :root[data-theme="dark"] .tag.ADJUST{color:#c0a98f}
+  :root[data-theme="dark"] .reached{background:rgba(76,175,116,.14);border-color:#356b4c;color:#8fd6a8}
+  :root[data-theme="dark"] .warn{background:rgba(200,160,60,.12);border-color:#6a5828;color:#d8ba70}
 </style>
 </head>
 <body>
@@ -154,6 +174,7 @@
     <span class="tag" id="cloudStatus" style="display:none"></span>
     <div class="spacer"></div>
     <div class="toolbar">
+      <button class="btn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle light or dark theme">☾</button>
       <button class="btn" id="refreshBtn">↻ Refresh prices</button>
       <button class="btn primary" id="addBtn">+ Add transaction</button>
     </div>
@@ -310,7 +331,7 @@ function defaultState(){
     settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR", manualRate:null },
     fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
     goal: { target:null, profitPct:10 },            // goal-mode target and per-trade profit %
-    ui: { view:"dashboard", mode:"portfolio" }      // mode: "portfolio" | "goal"
+    ui: { view:"dashboard", mode:"portfolio", theme:"light" }  // mode: portfolio|goal, theme: light|dark
   };
 }
 function normalizeState(s, keepUi){
@@ -319,7 +340,7 @@ function normalizeState(s, keepUi){
     settings: Object.assign(d.settings, s.settings||{}),
     fx: Object.assign(d.fx, s.fx||{}),
     goal: Object.assign(d.goal, s.goal||{}),
-    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio"}, s.ui||{})
+    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light"}, s.ui||{})
   });
 }
 function load(){
@@ -514,6 +535,13 @@ function heldQty(assetId, excludeId){
 function heldAssets(excludeId){
   const pos = computePortfolio(excludeId).positions;
   return Object.keys(pos).filter(id=>pos[id].qty>1e-9).map(id=>state.assets[id]).filter(Boolean);
+}
+
+/* ---------- theme ---------- */
+function applyTheme(){
+  const dark = (state.ui.theme==="dark");
+  document.documentElement.setAttribute("data-theme", dark?"dark":"light");
+  const b=document.getElementById("themeBtn"); if(b) b.textContent = dark ? "☀" : "☾";
 }
 
 /* ---------- rendering ---------- */
@@ -1218,6 +1246,10 @@ document.getElementById("modeSeg").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b) return;
   state.ui.mode=b.dataset.mode; save(); render();
 });
+document.getElementById("themeBtn").onclick=()=>{
+  state.ui.theme = (state.ui.theme==="dark") ? "light" : "dark";
+  save(); applyTheme();
+};
 document.getElementById("addBtn").onclick=()=>openModal(null);
 document.getElementById("refreshBtn").onclick=refreshPrices;
 document.getElementById("txClose").onclick=closeModal;
@@ -1284,6 +1316,7 @@ viewEl.addEventListener("click",e=>{
 document.addEventListener("keydown",e=>{ if(e.key==="Escape" && overlay.classList.contains("open")) closeModal(); });
 
 /* ---------- boot ---------- */
+applyTheme();
 render();
 setupAutoRefresh();
 updateFxChip();
