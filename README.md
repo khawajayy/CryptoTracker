@@ -106,12 +106,13 @@ The transaction dialog shows the relevant balances for what you're doing: **avai
 A toggle at the top switches between two separate modes:
 
 - **Portfolio** — everything above (dashboard, holdings, ledger, settings).
-- **Goal** — set a target portfolio value and track progress toward it:
-  - An elegant **progress ring** showing current equity as a % of the goal.
-  - **Goal target**, **current equity**, **remaining to goal**, and **total gain still needed** (all with PKR equivalents).
-  - **Winning trades needed** — pick an expected profit % per trade and it computes, by compounding, how many such trades grow your current equity to the goal (`n = ⌈ln(goal / equity) / ln(1 + pct/100)⌉`), with a small step-by-step projection. When equity reaches the target, a "Goal reached" banner appears.
+- **Goal** — track progress toward one or more target portfolio values. Add as many goals as you like (e.g. "First 10k", "Car fund", "100k milestone"); each is a card with:
+  - An elegant **progress ring** showing current equity as a % of that goal.
+  - **Remaining to goal** and **gain still needed** (with PKR equivalents).
+  - **Winning trades needed** — pick an expected profit % per trade (editable right on the card) and it computes, by compounding, how many such trades grow your current equity to the goal (`n = ⌈ln(goal / equity) / ln(1 + pct/100)⌉`). A "Reached!" banner appears once equity passes the target.
+  - **Add / Edit / Delete** goals from the Goal screen.
 
-  The goal and the mode you're in are saved. Goal mode is fully separate from Portfolio mode.
+  Goals sync across your devices (via cloud sync). The mode you're in is saved per device. Goal mode is fully separate from Portfolio mode.
 
 ## Break-even vs net capital
 

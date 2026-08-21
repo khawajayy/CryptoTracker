@@ -70,6 +70,9 @@
   @media(max-width:760px){.goalwrap{grid-template-columns:1fr}}
   .ringcard{display:flex;flex-direction:column;align-items:center;gap:6px;padding:26px 20px}
   .ring{position:relative;width:230px;height:230px}
+  .ring.sm{width:160px;height:160px}
+  .ring.sm .pctbig{font-size:32px}
+  .ring.sm .pctsub{font-size:11px}
   .ring svg{transform:rotate(-90deg)}
   .ring .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
   .ring .pctbig{font-size:46px;font-weight:700;line-height:1;letter-spacing:-.5px}
@@ -322,6 +325,7 @@ const sign = (n) => (n>=0?"+":"") ;
 
 /* ---------- state ---------- */
 let state = load();
+let goalEditing = null;   // null | "new" | goalId — controls the goal add/edit form
 
 function defaultState(){
   return {
@@ -330,18 +334,24 @@ function defaultState(){
     prices: {},                       // assetId -> {price,updatedAt}
     settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR", manualRate:null },
     fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
-    goal: { target:null, profitPct:10 },            // goal-mode target and per-trade profit %
+    goals: [],                                       // [{id,name,target,profitPct}]
     ui: { view:"dashboard", mode:"portfolio", theme:"light" }  // mode: portfolio|goal, theme: light|dark
   };
 }
 function normalizeState(s, keepUi){
   const d = defaultState();
-  return Object.assign(d, s, {
+  const merged = Object.assign(d, s, {
     settings: Object.assign(d.settings, s.settings||{}),
     fx: Object.assign(d.fx, s.fx||{}),
-    goal: Object.assign(d.goal, s.goal||{}),
     ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light"}, s.ui||{})
   });
+  merged.goals = Array.isArray(s.goals) ? s.goals : [];
+  // migrate the old single-goal shape ({target,profitPct}) into the list
+  if(merged.goals.length===0 && s.goal && s.goal.target>0){
+    merged.goals = [{ id: s.goal.id||uid(), name:"Goal", target:s.goal.target, profitPct:s.goal.profitPct||10 }];
+  }
+  delete merged.goal;
+  return merged;
 }
 function load(){
   try{
@@ -361,7 +371,7 @@ window.Cloud = window.Cloud || { configured:false, signedIn:false, email:null, s
   signIn:function(){ toast("Cloud sync isn't configured yet", true); }, signOut:function(){}, onLocalSave:null };
 // The subset of state that is synced (device-local things like ui & prices stay local).
 function getCloudPayload(){
-  return { transactions:state.transactions, assets:state.assets, settings:state.settings, goal:state.goal, updatedAt:Date.now() };
+  return { transactions:state.transactions, assets:state.assets, settings:state.settings, goals:state.goals, updatedAt:Date.now() };
 }
 function getLocalTxnCount(){ return (state.transactions||[]).length; }
 // Apply a state object arriving from the cloud, preserving this device's view/mode & live prices.
@@ -370,7 +380,8 @@ function applyCloudState(remote){
     transactions: remote.transactions||[],
     assets: remote.assets||{},
     settings: Object.assign({}, state.settings, remote.settings||{}),
-    goal: remote.goal || state.goal,
+    goals: Array.isArray(remote.goals) ? remote.goals : state.goals,
+    goal: remote.goal,   // let normalizeState migrate a legacy single goal if present
     fx: state.fx,
     prices: state.prices
   }, state.ui);
@@ -565,106 +576,110 @@ function tradesToGoal(from, to, pct){
   return Math.ceil(Math.log(to/from) / Math.log(1 + pct/100));
 }
 
+// progress-ring SVG at a given size
+function ringSVG(progress, reached, size, stroke){
+  const R = size/2 - stroke/2 - 2, C = 2*Math.PI*R, off = C*(1-progress/100), c = size/2;
+  const color = reached ? "var(--green)" : "url(#gGrad)";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <defs><linearGradient id="gGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2a8a58"/><stop offset="100%" stop-color="#1f6b46"/></linearGradient></defs>
+    <circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="var(--chip)" stroke-width="${stroke}"/>
+    <circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round"
+      stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg>`;
+}
+
+function goalCardHTML(g, equity){
+  const target=g.target, pct=g.profitPct||10;
+  const remaining=target-equity;
+  const progress=Math.max(0, Math.min(100, equity/target*100));
+  const reached=equity>=target-1e-9;
+  const gainNeededPct=equity>0 ? (target/equity-1)*100 : null;
+  const nTrades=tradesToGoal(equity, target, pct);
+  return `<div class="card">
+    <div class="flex" style="justify-content:space-between;gap:8px">
+      <b style="font-size:16px">${(g.name||"Goal")}</b>
+      <span style="white-space:nowrap">
+        <button class="iconbtn" data-goaledit="${g.id}" title="Edit">✎</button>
+        <button class="iconbtn" data-goaldel="${g.id}" title="Delete">🗑</button>
+      </span>
+    </div>
+    <div class="ringcard" style="padding:14px 0 4px">
+      <div class="ring sm">${ringSVG(progress, reached, 160, 13)}
+        <div class="center"><div class="pctbig ${reached?'pos':''}">${progress.toFixed(0)}%</div>
+        <div class="pctsub">of ${fmtUSD(target)}</div></div></div>
+    </div>
+    ${reached ? `<div class="reached">🎉 Reached!</div>` : ``}
+    <div class="goalstat"><span class="k">Current equity</span><span class="v">${fmtUSD(equity)}</span></div>
+    <div class="goalstat"><span class="k">${reached?'Surplus over goal':'Remaining'}</span>
+      <span class="v ${reached?'pos':''}">${fmtUSD(Math.abs(remaining))}${fmtSec(Math.abs(remaining))?`<small>${fmtSec(Math.abs(remaining))}</small>`:''}</span></div>
+    ${!reached && gainNeededPct!=null ? `<div class="goalstat"><span class="k">Gain still needed</span><span class="v">${gainNeededPct.toFixed(1)}%</span></div>` : ``}
+    ${!reached ? `<div style="text-align:center;margin-top:12px">
+        <span class="bignum">${nTrades!=null?`≈ ${nTrades}`:'—'}</span>
+        <span class="muted"> ${nTrades===1?'trade':'trades'} at </span>
+        <input type="number" data-goalpct="${g.id}" value="${pct}" step="any" min="0"
+          style="width:62px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius);text-align:right">
+        <span class="muted"> % each</span>
+        <div class="muted" style="font-size:12px;margin-top:6px">compounding ${pct}% each, reinvested, to reach ${fmtUSD(target)}</div>
+      </div>` : ``}
+  </div>`;
+}
+
 function renderGoal(){
   const p = computePortfolio();
-  const g = state.goal || {target:null, profitPct:10};
   const equity = p.equity;
+  const goals = state.goals || [];
 
-  if(!(g.target>0)){
-    viewEl.innerHTML = `
-      <div class="panel" style="max-width:520px;margin:0 auto">
-        <h2>🎯 Set your goal</h2>
-        <div style="padding:18px">
-          <p class="muted" style="margin-top:0">Pick a target portfolio value. Goal mode then shows how far your current equity (${fmtUSD(equity)}) is from it, and how many winning trades it takes to get there.</p>
-          <div class="field"><label>Goal target (USD)</label><input type="number" id="goalTarget" step="any" min="0" placeholder="e.g. 10000" /></div>
-          <div class="field"><label>Expected profit per winning trade (%)</label><input type="number" id="goalPct" step="any" min="0" value="${g.profitPct||10}" /></div>
-          <button class="btn primary" id="goalSave">Set goal</button>
-        </div>
-      </div>`;
-    document.getElementById("goalSave").onclick=()=>{
-      const t=parseFloat(document.getElementById("goalTarget").value);
-      const pc=parseFloat(document.getElementById("goalPct").value)||10;
-      if(!(t>0)){ toast("Enter a positive goal amount", true); return; }
-      state.goal={target:t, profitPct:pc}; save(); render(); toast("Goal set");
-    };
-    return;
+  let html = `<div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div style="font-family:var(--serif);font-size:21px;font-weight:700">🎯 Goals</div>
+    <button class="btn primary" id="goalAdd">＋ Add goal</button></div>`;
+
+  if(goalEditing){
+    const g = goalEditing==="new" ? {name:"",target:"",profitPct:10}
+            : (goals.find(x=>x.id===goalEditing) || {name:"",target:"",profitPct:10});
+    html += `<div class="panel" style="max-width:520px;margin:0 auto 18px">
+      <h2>${goalEditing==="new"?"New goal":"Edit goal"}</h2>
+      <div style="padding:18px">
+        <div class="field"><label>Name</label><input id="gfName" value="${(g.name||"").replace(/"/g,'&quot;')}" placeholder="e.g. Car fund, 100k milestone"></div>
+        <div class="field"><label>Target value (USD)</label><input id="gfTarget" type="number" step="any" min="0" value="${g.target||""}" placeholder="e.g. 10000"></div>
+        <div class="field"><label>Expected profit per winning trade (%)</label><input id="gfPct" type="number" step="any" min="0" value="${g.profitPct||10}"></div>
+        <div class="flex" style="gap:10px"><button class="btn primary" id="gfSave">Save goal</button><button class="btn" id="gfCancel">Cancel</button></div>
+      </div></div>`;
   }
 
-  const target = g.target, pct = g.profitPct||10;
-  const remaining = target - equity;
-  const progress = Math.max(0, Math.min(100, equity/target*100));
-  const reached = equity >= target - 1e-9;
-  const gainNeededPct = equity>0 ? (target/equity - 1)*100 : null;
-  const nTrades = tradesToGoal(equity, target, pct);
-
-  // progress ring geometry
-  const R=100, C=2*Math.PI*R, off=C*(1-progress/100);
-  const ringColor = reached ? "var(--green)" : "url(#gGrad)";
-
-  // small projection table (first few compounding steps toward goal)
-  let proj="";
-  if(!reached && nTrades){
-    const rows=[]; let e=equity; const steps=Math.min(nTrades,6);
-    for(let i=1;i<=steps;i++){ e=e*(1+pct/100); rows.push(`<tr><td>after trade ${i}</td><td>${fmtUSD(e)}</td><td class="muted">${Math.min(100,e/target*100).toFixed(0)}%</td></tr>`); }
-    if(nTrades>steps) rows.push(`<tr><td>…</td><td>…</td><td></td></tr><tr><td>after trade ${nTrades}</td><td>${fmtUSD(equity*Math.pow(1+pct/100,nTrades))}</td><td class="muted">100%</td></tr>`);
-    proj=`<table class="miniproj"><tbody>${rows.join("")}</tbody></table>`;
+  if(!goals.length && !goalEditing){
+    html += `<div class="panel">${emptyBlock("🎯","No goals yet","Add a target portfolio value to track progress toward it. Your current equity is "+fmtUSD(equity)+".")}</div>`;
+  } else if(goals.length){
+    html += `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(290px,1fr))">`
+          + goals.map(g=>goalCardHTML(g, equity)).join("") + `</div>`;
   }
 
-  viewEl.innerHTML = `
-    <div class="goalwrap">
-      <div class="panel ringcard">
-        <div class="ring">
-          <svg width="230" height="230" viewBox="0 0 230 230">
-            <defs><linearGradient id="gGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#2a8a58"/><stop offset="100%" stop-color="#1f6b46"/>
-            </linearGradient></defs>
-            <circle cx="115" cy="115" r="${R}" fill="none" stroke="var(--chip)" stroke-width="16"/>
-            <circle cx="115" cy="115" r="${R}" fill="none" stroke="${ringColor}" stroke-width="16" stroke-linecap="round"
-              stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
-          </svg>
-          <div class="center">
-            <div class="pctbig ${reached?'pos':''}">${progress.toFixed(1)}%</div>
-            <div class="pctsub">of ${fmtUSD(target)}</div>
-          </div>
-        </div>
-        <div class="muted" style="text-align:center;font-size:13px">Current equity <b style="color:var(--text)">${fmtUSD(equity)}</b></div>
-      </div>
+  viewEl.innerHTML = html;
 
-      <div class="panel" style="padding:20px">
-        <h2 style="padding:0 0 14px;border:none;margin:0">🎯 Goal progress</h2>
-        ${reached ? `<div class="reached">🎉 Goal reached! Your equity of ${fmtUSD(equity)} has hit your ${fmtUSD(target)} target.</div>` : ``}
-        <div class="goalstat"><span class="k">Goal target</span><span class="v">${fmtUSD(target)}${fmtSec(target)?`<small>${fmtSec(target)}</small>`:''}</span></div>
-        <div class="goalstat"><span class="k">Current equity</span><span class="v">${fmtUSD(equity)}${fmtSec(equity)?`<small>${fmtSec(equity)}</small>`:''}</span></div>
-        <div class="goalstat"><span class="k">${reached?'Surplus over goal':'Remaining to goal'}</span><span class="v ${reached?'pos':''}">${fmtUSD(Math.abs(remaining))}${fmtSec(Math.abs(remaining))?`<small>${fmtSec(Math.abs(remaining))}</small>`:''}</span></div>
-        ${!reached && gainNeededPct!=null?`<div class="goalstat"><span class="k">Total gain still needed</span><span class="v">${gainNeededPct.toFixed(1)}%</span></div>`:''}
-
-        ${!reached ? `
-        <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
-          <div class="flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <span class="k muted">Winning trades needed at</span>
-            <span><input type="number" id="goalPctLive" value="${pct}" step="any" min="0" style="width:80px;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:8px;text-align:right"> % each</span>
-          </div>
-          <div style="text-align:center;margin:14px 0 4px">
-            <span class="bignum">${nTrades!=null?`≈ ${nTrades}`:'—'}</span>
-            <span class="muted"> ${nTrades===1?'trade':'trades'}</span>
-          </div>
-          <div class="muted" style="text-align:center;font-size:12px">compounding ${pct}% profit each, reinvested, to grow ${fmtUSD(equity)} → ${fmtUSD(target)}</div>
-          ${proj}
-        </div>` : ``}
-
-        <div class="flex" style="margin-top:18px;gap:10px">
-          <button class="btn sm" id="goalEdit">Edit goal</button>
-          <button class="btn sm" id="goalClear">Clear goal</button>
-        </div>
-      </div>
-    </div>`;
-
-  const live=document.getElementById("goalPctLive");
-  if(live) live.addEventListener("input",()=>{
-    const v=parseFloat(live.value); if(v>0){ state.goal.profitPct=v; save(); renderGoal(); document.getElementById("goalPctLive").focus(); }
+  document.getElementById("goalAdd").onclick=()=>{ goalEditing="new"; renderGoal(); };
+  const cancel=document.getElementById("gfCancel"); if(cancel) cancel.onclick=()=>{ goalEditing=null; renderGoal(); };
+  const gfSave=document.getElementById("gfSave");
+  if(gfSave) gfSave.onclick=()=>{
+    const name=document.getElementById("gfName").value.trim();
+    const target=parseFloat(document.getElementById("gfTarget").value);
+    const pct=parseFloat(document.getElementById("gfPct").value)||10;
+    if(!(target>0)){ toast("Enter a positive target amount", true); return; }
+    if(goalEditing==="new"){
+      state.goals.push({ id:uid(), name:name||"Goal", target, profitPct:pct });
+    } else {
+      const g=state.goals.find(x=>x.id===goalEditing);
+      if(g){ g.name=name||"Goal"; g.target=target; g.profitPct=pct; }
+    }
+    goalEditing=null; save(); render(); toast("Goal saved");
+  };
+  viewEl.querySelectorAll("[data-goaledit]").forEach(b=>b.onclick=()=>{ goalEditing=b.dataset.goaledit; renderGoal(); });
+  viewEl.querySelectorAll("[data-goaldel]").forEach(b=>b.onclick=()=>{
+    const g=state.goals.find(x=>x.id===b.dataset.goaldel);
+    if(confirm(`Delete goal "${g?g.name:''}"?`)){ state.goals=state.goals.filter(x=>x.id!==b.dataset.goaldel); save(); render(); toast("Goal deleted"); }
   });
-  document.getElementById("goalEdit").onclick=()=>{ const t=state.goal.target; state.goal.target=null; save(); renderGoal(); const gt=document.getElementById("goalTarget"); if(gt) gt.value=t; };
-  document.getElementById("goalClear").onclick=()=>{ if(confirm("Clear your goal?")){ state.goal={target:null,profitPct:state.goal.profitPct||10}; save(); render(); toast("Goal cleared"); } };
+  viewEl.querySelectorAll("[data-goalpct]").forEach(inp=>inp.addEventListener("input",()=>{
+    const v=parseFloat(inp.value); if(v>0){ const g=state.goals.find(x=>x.id===inp.dataset.goalpct);
+      if(g){ g.profitPct=v; save(); renderGoal(); const again=viewEl.querySelector(`[data-goalpct="${g.id}"]`); if(again){ again.focus(); again.setSelectionRange(again.value.length,again.value.length);} } }
+  }));
 }
 
 function renderDashboard(){
