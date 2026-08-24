@@ -73,6 +73,8 @@ Deposit $3,000 → buy Intel $3,000 → sell Intel $2,500 (realized −$500) →
 
 - **Deposit / Withdraw** — move cash in/out (changes net capital). You can't withdraw more cash than you have.
 - **Buy / Sell** — quantity × price (+ optional fee). Sells compute realized P&L on average cost. You can't sell more than you hold.
+  - **Pick an existing holding** from a dropdown instead of searching every time (Sell lists what you hold; Buy also lists your watchlist and previously-traded assets), or search for something new.
+  - **Quantity / Price / Total auto-fill:** enter any two of the three and the third is computed for you (total = quantity × price).
 - **Adjust** — reconcile a balance without it being a trade or your own capital:
   - *Cash* — add or remove cash (dividends, interest, fees, corrections). This changes equity and therefore **counts toward return, not net capital**. (For your own money in/out, use Deposit/Withdraw.)
   - *Holding quantity* — add units (airdrop/bonus, brought in at $0 cost) or remove units (transfer-out/correction, removed at average cost with no realized P&L).
@@ -121,6 +123,10 @@ The Holdings table shows a **Break-even (net cap)** column: the price each holdi
 `breakevenPrice = (net capital − rest of account) / quantity`, where *rest of account* = cash + market value of your other holdings.
 
 Example: net capital $3,000, you hold 25 Intel and nothing else with $0 cash → break-even is `3,000 / 25 = $120`. The cell also shows the % move needed from the live price (e.g. `+20.0%`). If your cash + other holdings already cover net capital, it reads **✓ covered**. This is distinct from the cost-basis break-even implied by Unrealized P&L.
+
+## Watchlist
+
+A **Watchlist** tab for stocks/coins you want to follow without owning. Search (crypto or stock) to add them; each shows a **live price**, a **＋ Buy** button that opens the transaction dialog pre-filled with that asset, and a remove button. Watchlist prices refresh together with your holdings, and the list syncs across your devices.
 
 ## Secondary currency (PKR)
 
