@@ -13,3 +13,8 @@ cryptoledger-backup-*.json
 firebase-debug.log
 firestore-debug.log
 node_modules/
+
+# Agent tooling / installed skills (not part of the deployed app)
+.agents/
+.claude/
+skills-lock.json
