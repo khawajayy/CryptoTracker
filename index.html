@@ -6,44 +6,48 @@
 <title>CryptoLedger — Portfolio & Trade Tracker</title>
 <style>
   :root{
-    /* light (classic paper) — the default */
-    --bg:#ece6d8; --panel:#fbf9f3; --panel2:#f3eee1; --border:#d3cbb8;
-    --text:#2b2820; --muted:#726c5d; --accent:#1f6b46; --accent-dark:#175134; --accent2:#5b4636;
-    --green:#166a39; --red:#9e2424; --amber:#845d10; --chip:#efe9da;
-    --hover:#f4efe3; --input-bg:#ffffff; --btn-hover:#ffffff; --zebra:rgba(60,52,35,.035);
+    /* trading terminal — light variant */
+    --bg:#f6f8fa; --panel:#ffffff; --panel2:#eef1f5; --border:#dfe3e8;
+    --text:#0e1116; --muted:#5b6570; --accent:#1f883d; --accent-dark:#1a7332; --accent2:#0891b2;
+    --green:#1a7f37; --red:#cf222e; --amber:#9a6700; --chip:#eef1f5;
+    --hover:#eef1f5; --input-bg:#ffffff; --btn-hover:#eef1f5; --zebra:rgba(14,17,22,.022);
     --ease:cubic-bezier(.2,.8,.2,1);
-    --shadow:0 1px 2px rgba(60,52,35,.10);
-    --radius:5px;
-    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
-    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --shadow:0 1px 2px rgba(16,24,40,.05);
+    --radius:4px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji",sans-serif;
+    --mono:ui-monospace,"SFMono-Regular","SF Mono","Cascadia Code","JetBrains Mono",Consolas,"Liberation Mono",Menlo,monospace;
+    --serif:var(--sans);   /* token kept so any old refs resolve to sans */
   }
   :root[data-theme="dark"]{
-    /* classic muted dark — no neon */
-    --bg:#191813; --panel:#242219; --panel2:#1f1d16; --border:#3b372c;
-    --text:#ece7d7; --muted:#a29a86; --accent:#4fa376; --accent-dark:#3c8460; --accent2:#b7a184;
-    --green:#5cb583; --red:#d97a7a; --amber:#cfa24f; --chip:#2c2920;
-    --hover:#2c2920; --input-bg:#201e17; --btn-hover:#302d23; --zebra:rgba(255,255,255,.028);
-    --shadow:0 1px 2px rgba(0,0,0,.45);
+    /* trading terminal — dark (primary) */
+    --bg:#0e1116; --panel:#161b22; --panel2:#12161c; --border:#232a33;
+    --text:#e6edf3; --muted:#8b949e; --accent:#2ea043; --accent-dark:#25863a; --accent2:#22d3ee;
+    --green:#3fb950; --red:#f85149; --amber:#d29922; --chip:#1c2128;
+    --hover:#1a212b; --input-bg:#0d1117; --btn-hover:#222a33; --zebra:rgba(255,255,255,.022);
+    --shadow:0 1px 0 rgba(0,0,0,.3);
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{
     background:var(--bg);
     color:var(--text);
-    font:15.5px/1.6 var(--sans);
+    font:14.5px/1.5 var(--sans);
     font-variant-numeric:tabular-nums;
     -webkit-font-smoothing:antialiased;
     min-height:100vh;
   }
-  /* serif reserved for the masthead, section titles and big display numbers */
-  .logo,.panel h2,.modal header h3,.card .value,.hero .big,.ring .pctbig,.bignum{font-family:var(--serif)}
+  /* monospace numerals — the terminal signature */
+  .card .value,.hero .big,.ring .pctbig,.bignum,.goalstat .v,.bchip .bv{font-family:var(--mono);letter-spacing:-.3px}
+  td{font-family:var(--mono)}
+  td:first-child{font-family:var(--sans)}
+  .logo{font-family:var(--mono)}
   a{color:var(--accent);text-decoration:none}
   a:hover{text-decoration:underline}
   button{font:inherit;cursor:pointer}
   input,select{font:inherit}
   .wrap{max-width:1120px;margin:0 auto;padding:24px 22px 60px}
-  header.app{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap;border-bottom:2px solid var(--text);padding-bottom:14px}
-  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:23px;font-style:italic;letter-spacing:.2px}
+  header.app{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:14px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:19px;letter-spacing:-.3px}
   .logo .dot{width:20px;height:20px;border-radius:3px;background:var(--accent)}
   .spacer{flex:1}
   .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -58,10 +62,10 @@
   .btn.danger{color:#fff;background:var(--red);border:1px solid #7f1d1d}
   .btn.sm{padding:5px 10px;font-size:13px;border-radius:4px}
   .muted{color:var(--muted)}
-  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:22px;flex-wrap:wrap}
-  .tab{padding:9px 18px;color:var(--muted);font-weight:600;border:1px solid transparent;border-bottom:none;border-radius:5px 5px 0 0;margin-bottom:-1px}
+  .tabs{display:flex;gap:20px;border-bottom:1px solid var(--border);margin-bottom:20px;flex-wrap:wrap}
+  .tab{padding:9px 2px;color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.6px;border-bottom:2px solid transparent;margin-bottom:-1px}
   .tab:hover{color:var(--text)}
-  .tab.active{color:var(--text);background:var(--panel);border-color:var(--border);border-bottom:1px solid var(--panel)}
+  .tab.active{color:var(--text);border-bottom-color:var(--accent)}
   .modeseg{display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
   .modeseg button{background:var(--panel);border:none;color:var(--muted);padding:7px 18px;font-weight:600;font-size:14px}
   .modeseg button+button{border-left:1px solid var(--border)}
@@ -102,7 +106,7 @@
   .panel h2{margin:0;padding:14px 18px;font-size:16px;font-weight:700;border-bottom:1px solid var(--border);background:var(--panel2);display:flex;align-items:center;gap:10px}
   .panel h2 .spacer{flex:1}
   table{width:100%;border-collapse:collapse}
-  th,td{padding:10px 14px;text-align:right;white-space:nowrap}
+  th,td{padding:8px 12px;text-align:right;white-space:nowrap}
   th:first-child,td:first-child{text-align:left}
   thead th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border);font-weight:700}
   tbody tr{border-bottom:1px solid var(--border)}
@@ -115,9 +119,9 @@
   .sym .badge img{width:100%;height:100%;object-fit:cover}
   .sym .meta small{color:var(--muted);display:block;font-weight:400}
   .tag{font-size:10.5px;padding:2px 7px;border-radius:3px;border:1px solid var(--border);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;background:var(--panel2)}
-  .tag.crypto{color:#8a6a1f;border-color:#d6c496;background:#f4ecd6}
-  .tag.stock{color:#2a4a6b;border-color:#b7c7d9;background:#e8eff6}
-  .tag.DEPOSIT{color:var(--green)} .tag.WITHDRAW{color:var(--amber)} .tag.BUY{color:#2a4a6b} .tag.SELL{color:#7a3b5a} .tag.ADJUST{color:#5b4636}
+  .tag.crypto{color:#b45309;border-color:#fce4a6;background:#fffbeb}
+  .tag.stock{color:#1d4ed8;border-color:#c7dbfe;background:#eff6ff}
+  .tag.DEPOSIT{color:var(--green)} .tag.WITHDRAW{color:var(--amber)} .tag.BUY{color:#1d4ed8} .tag.SELL{color:#9333ea} .tag.ADJUST{color:#4b5563}
   .empty{padding:44px 18px;text-align:center;color:var(--muted)}
   .empty .em{font-size:34px;margin-bottom:8px}
   /* modal */
@@ -606,7 +610,7 @@ function ringSVG(progress, reached, size, stroke){
   const color = reached ? "var(--green)" : "url(#gGrad)";
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
     <defs><linearGradient id="gGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2a8a58"/><stop offset="100%" stop-color="#1f6b46"/></linearGradient></defs>
+      <stop offset="0%" stop-color="#3fb950"/><stop offset="100%" stop-color="#2ea043"/></linearGradient></defs>
     <circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="var(--chip)" stroke-width="${stroke}"/>
     <circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round"
       stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg>`;
