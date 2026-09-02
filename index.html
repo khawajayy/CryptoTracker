@@ -360,6 +360,7 @@ function defaultState(){
     fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
     goals: [],                                       // [{id,name,target,profitPct}]
     favorites: [],                                   // watchlist: [{id,type,symbol,name,coingeckoId,img}]
+    equityHistory: [],                               // device-local equity snapshots [{t,v}]
     ui: { view:"dashboard", mode:"portfolio", theme:"light" }  // mode: portfolio|goal, theme: light|dark
   };
 }
@@ -377,6 +378,7 @@ function normalizeState(s, keepUi){
   }
   delete merged.goal;
   merged.favorites = Array.isArray(s.favorites) ? s.favorites : [];
+  merged.equityHistory = Array.isArray(s.equityHistory) ? s.equityHistory : [];
   return merged;
 }
 function load(){
@@ -386,8 +388,9 @@ function load(){
     return normalizeState(JSON.parse(raw));
   }catch(e){ return defaultState(); }
 }
+function persistLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){} }
 function save(){
-  localStorage.setItem(LS_KEY, JSON.stringify(state));
+  persistLocal();
   if(window.Cloud && window.Cloud.onLocalSave) window.Cloud.onLocalSave();  // debounced cloud push
 }
 
@@ -409,6 +412,7 @@ function applyCloudState(remote){
     goals: Array.isArray(remote.goals) ? remote.goals : state.goals,
     goal: remote.goal,   // let normalizeState migrate a legacy single goal if present
     favorites: Array.isArray(remote.favorites) ? remote.favorites : state.favorites,
+    equityHistory: state.equityHistory,   // device-local; never overwritten by cloud
     fx: state.fx,
     prices: state.prices
   }, state.ui);
@@ -749,8 +753,92 @@ function renderDashboard(){
       <h2>Open positions <span class="spacer"></span><span class="muted price-fresh" id="freshHint"></span></h2>
       ${p.holdings.length? holdingsTable(p, true) : emptyBlock("📈","No open positions","Add a Buy transaction to start tracking a holding.")}
     </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h2>Equity over time <span class="spacer"></span><span class="muted price-fresh">${equityRangeLabel()}</span></h2>
+      ${equityChartHTML(p.equity)}
+    </div>
   `;
   document.getElementById("freshHint").textContent = freshnessText(p.holdings);
+}
+
+/* ---------- equity history + chart ---------- */
+// Record a real market-equity snapshot (device-local, throttled).
+function recordEquityPoint(){
+  const eq = computePortfolio().equity;
+  if(!isFinite(eq)) return;
+  const now = Date.now();
+  const h = state.equityHistory || (state.equityHistory=[]);
+  const last = h[h.length-1];
+  if(last && (now-last.t) < 15*60*1000 && Math.abs(eq-last.v) < Math.max(0.01, Math.abs(last.v)*0.0005)) return;
+  h.push({ t:now, v:+eq.toFixed(2) });
+  if(h.length>1000) h.splice(0, h.length-1000);
+  persistLocal();
+}
+// Build the series: book value (cash + cost basis) reconstructed at each ledger
+// event, plus recorded live snapshots, plus the current live equity. All real.
+function equitySeries(currentEquity){
+  const txns=[...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
+  let cash=0; const pos={}; const pts=[];
+  const costTotal=()=>Object.values(pos).reduce((s,p)=> s + Math.max(0,p.costBasis), 0);
+  for(const t of txns){
+    if(t.type==="DEPOSIT") cash+=t.amount;
+    else if(t.type==="WITHDRAW") cash-=t.amount;
+    else if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); cash-=g; const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; }
+    else if(t.type==="SELL"){ const g=t.qty*t.price-(t.fee||0); cash+=g; const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=t.qty; p.costBasis-=avg*t.qty; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
+    else if(t.type==="ADJUST"){ if(t.target==="cash") cash+=t.delta; else { const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} } }
+    pts.push({ t:new Date(t.date).getTime(), v:+(cash+costTotal()).toFixed(2) });
+  }
+  for(const s of (state.equityHistory||[])) pts.push({ t:s.t, v:s.v });
+  pts.push({ t:Date.now(), v:+(currentEquity!=null?currentEquity:computePortfolio().equity).toFixed(2) });
+  pts.sort((a,b)=>a.t-b.t);
+  // collapse points sharing the same timestamp (keep the last)
+  const out=[]; for(const p of pts){ if(out.length && out[out.length-1].t===p.t) out[out.length-1]=p; else out.push(p); }
+  return out;
+}
+function equityRangeLabel(){
+  const s=equitySeries();
+  if(s.length<2) return "";
+  const fmt=t=>new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'});
+  return `${fmt(s[0].t)} – ${fmt(s[s.length-1].t)}`;
+}
+function equityChartHTML(currentEquity){
+  const s=equitySeries(currentEquity);
+  if(s.length<2) return emptyBlock("📉","Not enough history yet","The equity curve fills in as you record trades and refresh prices over time.");
+  const W=800, H=170, padL=6, padR=6, padT=14, padB=16;
+  const w=W-padL-padR, h=H-padT-padB;
+  const tMin=s[0].t, tMax=s[s.length-1].t;
+  const vals=s.map(p=>p.v); let vMin=Math.min(...vals), vMax=Math.max(...vals);
+  if(vMin===vMax){ vMin-=Math.max(1,Math.abs(vMin)*0.02); vMax+=Math.max(1,Math.abs(vMax)*0.02); }
+  const padv=(vMax-vMin)*0.10; vMin-=padv; vMax+=padv;
+  const X=t=> padL + (tMax===tMin?0:(t-tMin)/(tMax-tMin))*w;
+  const Y=v=> padT + (1-(v-vMin)/(vMax-vMin))*h;
+  const line=s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
+  const area=`${line} L${X(s[s.length-1].t).toFixed(1)},${(padT+h).toFixed(1)} L${X(s[0].t).toFixed(1)},${(padT+h).toFixed(1)} Z`;
+  const first=s[0].v, last=s[s.length-1].v, chg=last-first, chgPct=first!==0?chg/Math.abs(first)*100:0;
+  const up=chg>=0;
+  const stroke=up?"var(--green)":"var(--red)";
+  const lastX=X(s[s.length-1].t), lastY=Y(last);
+  return `
+    <div style="padding:14px 16px 8px">
+      <div class="flex" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <div><span class="bignum">${fmtUSD(last)}</span>
+          <span class="${cls(chg)}" style="font-weight:700;margin-left:6px">${arrow(chg)}${fmtUSD(Math.abs(chg))} (${fmtPct(chgPct)})</span>
+          <div class="muted" style="font-size:12px">change over shown range</div></div>
+        <div class="muted" style="font-size:12px;text-align:right">high ${fmtUSD(Math.max(...vals))}<br>low ${fmtUSD(Math.min(...vals))}</div>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block">
+        <defs><linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0.22"/>
+          <stop offset="100%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0"/></linearGradient></defs>
+        <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="var(--border)" stroke-width="1"/>
+        <line x1="${padL}" y1="${padT+h}" x2="${W-padR}" y2="${padT+h}" stroke="var(--border)" stroke-width="1"/>
+        <path d="${area}" fill="url(#eqFill)"/>
+        <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+        <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="3.5" fill="${stroke}"/>
+      </svg>
+      <div class="muted" style="font-size:11.5px;margin-top:2px">Live points are recorded as you refresh prices; earlier points are valued at cost.</div>
+    </div>`;
 }
 
 function holdingsTable(p, compact){
@@ -1055,6 +1143,7 @@ async function refreshPrices(){
       }
     }
     save();
+    recordEquityPoint();                 // capture a real equity snapshot with fresh prices
     status.textContent = `prices: ${ok} ok${fail?`, ${fail} failed`:''}`;
     if(fail && stocks.length && !state.settings.finnhubKey) toast("Add a Finnhub key in Settings for stock prices", true);
     render();
@@ -1492,6 +1581,7 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape" && overlay.classLis
 
 /* ---------- boot ---------- */
 applyTheme();
+recordEquityPoint();
 render();
 setupAutoRefresh();
 updateFxChip();
