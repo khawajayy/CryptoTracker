@@ -118,7 +118,7 @@ A toggle at the top switches between two separate modes:
 
 ## Equity over time (dashboard chart)
 
-Below Open Positions, the dashboard shows an **equity curve**. It's built from real numbers, never faked: earlier points are reconstructed from your ledger (cash + cost basis at each transaction date), and live equity **snapshots are recorded** each time prices refresh, so the curve fills in and reflects true market value as you keep using the app. It shows the current value, the change over the visible range, and the range's high/low. Equity history is kept per device (not synced), so each device builds its own live curve.
+Below Open Positions, the dashboard shows an **equity curve**. It's built from real numbers, never faked: earlier points are reconstructed from your ledger (cash + cost basis at each transaction date), and live equity **snapshots are recorded** each time prices refresh, so the curve fills in and reflects true market value as you keep using the app. It shows the current value, the change over the visible range, and the range's high/low. **Hover** (or touch-drag) anywhere on the chart to read the equity value and date at that point, and the **X-axis shows dated ticks** across the range. Equity history is kept per device (not synced), so each device builds its own live curve.
 
 ## Break-even vs net capital
 

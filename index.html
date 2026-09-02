@@ -169,6 +169,13 @@
   :root[data-theme="dark"] .tag.BUY{color:#8fb4dc} :root[data-theme="dark"] .tag.SELL{color:#d29ab8} :root[data-theme="dark"] .tag.ADJUST{color:#c0a98f}
   :root[data-theme="dark"] .reached{background:rgba(76,175,116,.14);border-color:#356b4c;color:#8fd6a8}
   :root[data-theme="dark"] .warn{background:rgba(200,160,60,.12);border-color:#6a5828;color:#d8ba70}
+  /* equity chart hover + axis */
+  .eqchart{position:relative;touch-action:none}
+  .eqcross{position:absolute;width:1px;background:var(--muted);opacity:.5;pointer-events:none;top:14px;height:140px}
+  .eqdot{position:absolute;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 0 2px var(--panel)}
+  .eqtip{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:12px;white-space:nowrap;pointer-events:none;box-shadow:var(--shadow);z-index:2;font-variant-numeric:tabular-nums}
+  .eqx{position:relative;height:15px;margin-top:2px;font-size:10.5px;color:var(--muted)}
+  .eqx span{position:absolute;transform:translateX(-50%);white-space:nowrap}
   /* keyboard focus (mouse users unaffected) */
   .btn:focus-visible,.tab:focus-visible,.modeseg button:focus-visible,.iconbtn:focus-visible,.seg button:focus-visible{
     outline:2px solid var(--accent);outline-offset:2px}
@@ -350,6 +357,7 @@ const arrow = (n) => n>0 ? '<span class="delta">▲</span>' : (n<0 ? '<span clas
 /* ---------- state ---------- */
 let state = load();
 let goalEditing = null;   // null | "new" | goalId — controls the goal add/edit form
+let lastEquityChart = null;   // scale params for the equity-chart hover
 
 function defaultState(){
   return {
@@ -760,6 +768,7 @@ function renderDashboard(){
     </div>
   `;
   document.getElementById("freshHint").textContent = freshnessText(p.holdings);
+  wireEquityHover();
 }
 
 /* ---------- equity history + chart ---------- */
@@ -802,9 +811,15 @@ function equityRangeLabel(){
   const fmt=t=>new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'});
   return `${fmt(s[0].t)} – ${fmt(s[s.length-1].t)}`;
 }
+function equityTickLabel(t, rangeDays){
+  const d=new Date(t);
+  if(rangeDays<2) return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  if(rangeDays<365) return d.toLocaleDateString([], {month:'short',day:'2-digit'});
+  return d.toLocaleDateString([], {month:'short',year:'2-digit'});
+}
 function equityChartHTML(currentEquity){
   const s=equitySeries(currentEquity);
-  if(s.length<2) return emptyBlock("📉","Not enough history yet","The equity curve fills in as you record trades and refresh prices over time.");
+  if(s.length<2){ lastEquityChart=null; return emptyBlock("📉","Not enough history yet","The equity curve fills in as you record trades and refresh prices over time."); }
   const W=800, H=170, padL=6, padR=6, padT=14, padB=16;
   const w=W-padL-padR, h=H-padT-padB;
   const tMin=s[0].t, tMax=s[s.length-1].t;
@@ -818,27 +833,68 @@ function equityChartHTML(currentEquity){
   const first=s[0].v, last=s[s.length-1].v, chg=last-first, chgPct=first!==0?chg/Math.abs(first)*100:0;
   const up=chg>=0;
   const stroke=up?"var(--green)":"var(--red)";
-  const lastX=X(s[s.length-1].t), lastY=Y(last);
+
+  // expose scale for the hover handler
+  lastEquityChart={ series:s, W,H,padL,padR,padT,padB,w,h,tMin,tMax,vMin,vMax,stroke };
+
+  // X-axis day ticks (evenly spaced in time)
+  const rangeDays=(tMax-tMin)/86400000;
+  const ticks=[]; const N=5;
+  for(let i=0;i<N;i++){ const f=i/(N-1); const t=tMin+f*(tMax-tMin); const leftPct=(X(t)/W*100);
+    ticks.push(`<span style="left:${leftPct.toFixed(2)}%">${equityTickLabel(t,rangeDays)}</span>`); }
+
   return `
-    <div style="padding:14px 16px 8px">
+    <div style="padding:14px 16px 10px">
       <div class="flex" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:8px">
         <div><span class="bignum">${fmtUSD(last)}</span>
           <span class="${cls(chg)}" style="font-weight:700;margin-left:6px">${arrow(chg)}${fmtUSD(Math.abs(chg))} (${fmtPct(chgPct)})</span>
           <div class="muted" style="font-size:12px">change over shown range</div></div>
         <div class="muted" style="font-size:12px;text-align:right">high ${fmtUSD(Math.max(...vals))}<br>low ${fmtUSD(Math.min(...vals))}</div>
       </div>
-      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block">
-        <defs><linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0.22"/>
-          <stop offset="100%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0"/></linearGradient></defs>
-        <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="var(--border)" stroke-width="1"/>
-        <line x1="${padL}" y1="${padT+h}" x2="${W-padR}" y2="${padT+h}" stroke="var(--border)" stroke-width="1"/>
-        <path d="${area}" fill="url(#eqFill)"/>
-        <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-        <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="3.5" fill="${stroke}"/>
-      </svg>
-      <div class="muted" style="font-size:11.5px;margin-top:2px">Live points are recorded as you refresh prices; earlier points are valued at cost.</div>
+      <div class="eqchart" id="eqChart">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block">
+          <defs><linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0"/></linearGradient></defs>
+          <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="var(--border)" stroke-width="1"/>
+          <line x1="${padL}" y1="${padT+h}" x2="${W-padR}" y2="${padT+h}" stroke="var(--border)" stroke-width="1"/>
+          <path d="${area}" fill="url(#eqFill)"/>
+          <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="eqcross" id="eqCross" hidden></div>
+        <div class="eqdot" id="eqDot" hidden></div>
+        <div class="eqtip" id="eqTip" hidden></div>
+        <div class="eqx">${ticks.join("")}</div>
+      </div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">Hover to read a value. Live points are recorded as you refresh prices; earlier points are valued at cost.</div>
     </div>`;
+}
+// Attach hover crosshair + tooltip to the equity chart (called after each dashboard render).
+function wireEquityHover(){
+  const c=document.getElementById("eqChart"); const m=lastEquityChart; if(!c||!m) return;
+  const cross=document.getElementById("eqCross"), dot=document.getElementById("eqDot"), tip=document.getElementById("eqTip");
+  const Xv=t=> m.padL + (m.tMax===m.tMin?0:(t-m.tMin)/(m.tMax-m.tMin))*m.w;   // viewBox x
+  const Yv=v=> m.padT + (1-(v-m.vMin)/(m.vMax-m.vMin))*m.h;                    // viewBox y (== px, height 1:1)
+  function move(clientX){
+    const rect=c.getBoundingClientRect();
+    const svgX=(clientX-rect.left)/rect.width*m.W;
+    const tFrac=Math.max(0,Math.min(1,(svgX-m.padL)/m.w));
+    const t=m.tMin+tFrac*(m.tMax-m.tMin);
+    let best=m.series[0]; for(const p of m.series){ if(Math.abs(p.t-t)<Math.abs(best.t-t)) best=p; }
+    const bx=Xv(best.t)/m.W*rect.width, by=Yv(best.v);
+    cross.style.left=bx+"px"; cross.hidden=false;
+    dot.style.left=bx+"px"; dot.style.top=by+"px"; dot.style.background=m.stroke; dot.hidden=false;
+    tip.innerHTML=`<b>${fmtUSD(best.v)}</b> <span class="muted">${new Date(best.t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'})}</span>`;
+    tip.hidden=false;
+    const tw=tip.offsetWidth||130; let tl=bx+12; if(tl+tw>rect.width) tl=bx-tw-12;
+    tip.style.left=Math.max(0,tl)+"px"; tip.style.top=Math.max(0,by-32)+"px";
+  }
+  function hide(){ cross.hidden=true; dot.hidden=true; tip.hidden=true; }
+  c.onmousemove=e=>move(e.clientX);
+  c.onmouseleave=hide;
+  c.ontouchstart=e=>{ if(e.touches[0]) move(e.touches[0].clientX); };
+  c.ontouchmove=e=>{ if(e.touches[0]){ move(e.touches[0].clientX); e.preventDefault(); } };
+  c.ontouchend=hide;
 }
 
 function holdingsTable(p, compact){
