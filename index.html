@@ -386,6 +386,7 @@ function defaultState(){
     goals: [],                                       // [{id,name,target,profitPct}]
     favorites: [],                                   // watchlist: [{id,type,symbol,name,coingeckoId,img}]
     equityHistory: [],                               // device-local equity snapshots [{t,v}]
+    dataUpdatedAt: 0,                                 // ms of last synced-data change (for newest-wins)
     ui: { view:"dashboard", mode:"portfolio", theme:"light" }  // mode: portfolio|goal, theme: light|dark
   };
 }
@@ -404,6 +405,7 @@ function normalizeState(s, keepUi){
   delete merged.goal;
   merged.favorites = Array.isArray(s.favorites) ? s.favorites : [];
   merged.equityHistory = Array.isArray(s.equityHistory) ? s.equityHistory : [];
+  merged.dataUpdatedAt = s.dataUpdatedAt || 0;
   return merged;
 }
 function load(){
@@ -415,6 +417,7 @@ function load(){
 }
 function persistLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){} }
 function save(){
+  state.dataUpdatedAt = Date.now();   // stamp this change so newest-wins sync can compare
   persistLocal();
   if(window.Cloud && window.Cloud.onLocalSave) window.Cloud.onLocalSave();  // debounced cloud push
 }
@@ -425,9 +428,10 @@ window.Cloud = window.Cloud || { configured:false, signedIn:false, email:null, s
   signIn:function(){ toast("Cloud sync isn't configured yet", true); }, signOut:function(){}, onLocalSave:null };
 // The subset of state that is synced (device-local things like ui & prices stay local).
 function getCloudPayload(){
-  return { transactions:state.transactions, assets:state.assets, settings:state.settings, goals:state.goals, favorites:state.favorites, updatedAt:Date.now() };
+  return { transactions:state.transactions, assets:state.assets, settings:state.settings, goals:state.goals, favorites:state.favorites, updatedAt:(state.dataUpdatedAt||Date.now()) };
 }
 function getLocalTxnCount(){ return (state.transactions||[]).length; }
+function getLocalUpdatedAt(){ return state.dataUpdatedAt || 0; }
 // Apply a state object arriving from the cloud, preserving this device's view/mode & live prices.
 function applyCloudState(remote){
   state = normalizeState({
@@ -438,13 +442,14 @@ function applyCloudState(remote){
     goal: remote.goal,   // let normalizeState migrate a legacy single goal if present
     favorites: Array.isArray(remote.favorites) ? remote.favorites : state.favorites,
     equityHistory: state.equityHistory,   // device-local; never overwritten by cloud
+    dataUpdatedAt: remote.updatedAt || Date.now(),   // adopt the cloud version's timestamp
     fx: state.fx,
     prices: state.prices
   }, state.ui);
-  localStorage.setItem(LS_KEY, JSON.stringify(state));   // cache only — do NOT echo back to cloud
+  persistLocal();   // cache only — do NOT echo back to cloud
   render(); updateFxChip();
 }
-window.getCloudPayload=getCloudPayload; window.getLocalTxnCount=getLocalTxnCount; window.applyCloudState=applyCloudState;
+window.getCloudPayload=getCloudPayload; window.getLocalTxnCount=getLocalTxnCount; window.applyCloudState=applyCloudState; window.getLocalUpdatedAt=getLocalUpdatedAt;
 // Header chip + the Settings cloud panel, refreshed whenever cloud state changes.
 function setCloudStatus(text){
   const c = window.Cloud||{}; if(text!=null) c.status=text;
@@ -1780,16 +1785,20 @@ if(!configured){
         window.setCloudStatus("connecting…");
         try{
           const snap = await getDoc(ref);
-          const remoteHasData = snap.exists() && (snap.data().transactions||[]).length>0;
+          const remote = snap.exists() ? snap.data() : null;
+          const remoteHasData = remote && (remote.transactions||[]).length>0;
           const localHasData  = (window.getLocalTxnCount && window.getLocalTxnCount())>0;
-          if(remoteHasData && localHasData){
-            const useCloud = confirm("This account already has cloud data.\n\nOK = load the CLOUD data onto this device.\nCancel = upload THIS device's data to the cloud (overwrites cloud).");
-            if(useCloud){ applying=true; try{ window.applyCloudState(snap.data()); } finally{ applying=false; } }
-            else { pushNow(); }
+          const remoteT = (remote && remote.updatedAt) || 0;
+          const localT  = (window.getLocalUpdatedAt && window.getLocalUpdatedAt()) || 0;
+          // Newest wins, automatically: load cloud if it's newer (or local is empty);
+          // otherwise upload this device's data (overwriting the older cloud copy).
+          if(remoteHasData && (!localHasData || remoteT > localT)){
+            applying=true; try{ window.applyCloudState(remote); } finally{ applying=false; }
+            window.setCloudStatus("loaded newer cloud data");
+          } else if(localHasData){
+            pushNow();               // local is newer (or cloud empty) -> push/overwrite
           } else if(remoteHasData){
-            applying=true; try{ window.applyCloudState(snap.data()); } finally{ applying=false; }
-          } else {
-            pushNow();               // first time on this account: upload what's here
+            applying=true; try{ window.applyCloudState(remote); } finally{ applying=false; }
           }
         }catch(e){ window.setCloudStatus("sync error"); }
         subscribe();

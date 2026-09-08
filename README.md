@@ -38,6 +38,7 @@ This publishes the site **and** the Firestore security rules (`firestore.rules`,
 
 **7. Use it**
 - Open that URL on any device → **Settings → Cloud sync → Sign in with Google**. The first device uploads your existing data; other devices then load and stay in sync automatically. The header shows a `☁` status.
+- **Newest wins on sign-in:** every change stamps a last-modified time. When you sign in, if the cloud copy is newer than this device it's loaded; if this device is newer it's uploaded, overwriting the older cloud copy. No prompt.
 
 Notes:
 - If you host somewhere other than Firebase Hosting, add that domain under **Authentication → Settings → Authorized domains**, or Google sign-in will be blocked.
