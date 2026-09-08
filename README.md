@@ -75,6 +75,7 @@ Deposit $3,000 → buy Intel $3,000 → sell Intel $2,500 (realized −$500) →
 - **Buy / Sell** — quantity × price (+ optional fee). Sells compute realized P&L on average cost. You can't sell more than you hold.
   - **Pick an existing holding** from a dropdown instead of searching every time (Sell lists what you hold; Buy also lists your watchlist and previously-traded assets), or search for something new.
   - **Quantity / Price / Total auto-fill:** enter any two of the three and the third is computed for you (total = quantity × price).
+  - **Size control:** 0 / 25 / 50 / 75 / Max preset buttons plus a slider set the amount — for a **Sell** it's a % of the quantity you hold, for a **Buy** it's a % of your available cash. The slider also reflects the amount you've typed.
 - **Adjust** — reconcile a balance without it being a trade or your own capital:
   - *Cash* — add or remove cash (dividends, interest, fees, corrections). This changes equity and therefore **counts toward return, not net capital**. (For your own money in/out, use Deposit/Withdraw.)
   - *Holding quantity* — add units (airdrop/bonus, brought in at $0 cost) or remove units (transfer-out/correction, removed at average cost with no realized P&L).

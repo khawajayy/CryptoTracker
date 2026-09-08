@@ -169,6 +169,11 @@
   :root[data-theme="dark"] .tag.BUY{color:#8fb4dc} :root[data-theme="dark"] .tag.SELL{color:#d29ab8} :root[data-theme="dark"] .tag.ADJUST{color:#c0a98f}
   :root[data-theme="dark"] .reached{background:rgba(76,175,116,.14);border-color:#356b4c;color:#8fd6a8}
   :root[data-theme="dark"] .warn{background:rgba(200,160,60,.12);border-color:#6a5828;color:#d8ba70}
+  /* buy/sell size slider */
+  input[type=range]{-webkit-appearance:none;appearance:none;height:6px;border-radius:999px;background:var(--chip);outline:none;padding:0;border:1px solid var(--border)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--panel);box-shadow:var(--shadow)}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--panel)}
+  #pctSeg button{font-size:12.5px}
   /* equity chart hover + axis */
   .eqchart{position:relative;touch-action:none}
   .eqcross{position:absolute;width:1px;background:var(--muted);opacity:.5;pointer-events:none;top:14px;height:140px}
@@ -270,6 +275,18 @@
         <div class="row2">
           <div class="field"><label>Total (USD)</label><input type="number" id="total" step="any" min="0" placeholder="auto" /></div>
           <div class="field"><label>Fee (USD, optional)</label><input type="number" id="fee" step="any" min="0" placeholder="0" /></div>
+        </div>
+        <div class="field" id="sizeField">
+          <label id="sizeLabel">Size</label>
+          <div class="seg" id="pctSeg">
+            <button data-pct="0" type="button">0%</button>
+            <button data-pct="25" type="button">25%</button>
+            <button data-pct="50" type="button">50%</button>
+            <button data-pct="75" type="button">75%</button>
+            <button data-pct="100" type="button">Max</button>
+          </div>
+          <input type="range" id="pctSlider" min="0" max="100" step="1" value="0" style="width:100%;margin-top:9px" />
+          <div class="hint" id="sizeHint"></div>
         </div>
         <button class="btn sm" id="useLive" type="button" style="width:100%;margin-bottom:8px">Use live price</button>
         <div class="calc" id="tradeCalc">—</div>
@@ -1237,6 +1254,9 @@ function openModal(txn){
   document.getElementById("qty").value = txn && txn.qty!=null? txn.qty : "";
   document.getElementById("price").value = txn && txn.price!=null? txn.price : "";
   document.getElementById("total").value = (txn && txn.qty>0 && txn.price>0) ? +(txn.qty*txn.price).toFixed(2) : "";
+  document.getElementById("pctSlider").value=0;
+  document.querySelectorAll("#pctSeg button").forEach(b=>b.classList.remove("active"));
+  document.getElementById("sizeHint").textContent="";
   document.getElementById("fee").value = txn && txn.fee? txn.fee : "";
   document.getElementById("txNote").value = txn? (txn.note||"") : "";
   document.getElementById("txDate").value = toLocalInput(txn? txn.date : new Date().toISOString());
@@ -1280,7 +1300,10 @@ function updateModalMode(){
     document.getElementById("adjAssetField").style.display = adjTarget==="asset"? "block":"none";
     document.getElementById("adjAmtLabel").textContent = adjTarget==="cash"? "Amount (USD)" : "Quantity";
   }
-  if(isTrade) populateAssetPick();
+  if(isTrade){
+    populateAssetPick();
+    document.getElementById("sizeLabel").textContent = modalType==="SELL" ? "Sell size (% of holding)" : "Buy size (% of cash)";
+  }
   updateBalanceStrip();
 }
 
@@ -1374,6 +1397,40 @@ function syncTriad(edited){
   updateTradeCalc();
 }
 
+// Size control: Sell = % of the held quantity, Buy = % of available cash.
+function applySizePct(pct){
+  pct=Math.max(0,Math.min(100,Math.round(pct)));
+  const slider=document.getElementById("pctSlider"); if(slider) slider.value=pct;
+  document.querySelectorAll("#pctSeg button").forEach(b=>b.classList.toggle("active", b.dataset.pct===String(pct)));
+  const hint=document.getElementById("sizeHint");
+  const p=computePortfolio(editingId);
+  if(modalType==="SELL"){
+    if(!pickedAsset){ if(hint) hint.textContent="Pick a holding first, then choose a size."; return; }
+    const pos=p.positions[pickedAsset.id]; const held=pos?pos.qty:0;
+    const qty=+(held*pct/100).toFixed(8);
+    document.getElementById("qty").value = held>0 ? qty : "";
+    syncTriad("qty");
+    if(hint) hint.textContent = held>0 ? `Selling ${fmtNum(qty)} of ${fmtNum(held)} ${(pickedAsset.symbol||"").toUpperCase()} (${pct}%)` : "You don't hold this asset.";
+  } else if(modalType==="BUY"){
+    const cash=p.cash;
+    const spend=+(cash*pct/100).toFixed(2);
+    document.getElementById("total").value = spend>0 ? spend : "";
+    syncTriad("total");
+    const hasPrice=parseFloat(document.getElementById("price").value)>0;
+    if(hint) hint.textContent = `Spending ${fmtUSD(spend)} of ${fmtUSD(cash)} cash (${pct}%)` + (hasPrice?"":" — set a price to get quantity");
+  }
+}
+// Reflect current qty/total back onto the slider position (one-way display sync).
+function refreshSizeSlider(){
+  const slider=document.getElementById("pctSlider"); if(!slider) return;
+  const p=computePortfolio(editingId); let pct=null;
+  if(modalType==="SELL" && pickedAsset){ const pos=p.positions[pickedAsset.id]; const held=pos?pos.qty:0;
+    const q=parseFloat(document.getElementById("qty").value); if(held>0 && Number.isFinite(q)) pct=q/held*100; }
+  else if(modalType==="BUY"){ const t=parseFloat(document.getElementById("total").value); if(p.cash>0 && Number.isFinite(t)) pct=t/p.cash*100; }
+  if(pct!=null){ const cl=Math.max(0,Math.min(100,pct)); slider.value=Math.round(cl);
+    document.querySelectorAll("#pctSeg button").forEach(b=>b.classList.toggle("active", b.dataset.pct===String(Math.round(cl)))); }
+}
+
 function updateTradeCalc(){
   updateBalanceStrip();
   const cashWarn=document.getElementById("cashWarn"); cashWarn.innerHTML="";
@@ -1402,6 +1459,7 @@ function updateTradeCalc(){
     el.innerHTML=`Proceeds: <b>${fmtUSD(proceeds)}</b> &nbsp;·&nbsp; realized P&L: <b class="${cls(realized)}">${sign(realized)}${fmtUSD(realized)}</b>`;
     if(pickedAsset && qty>held+1e-9) warn.innerHTML=`<div class="warn">You only hold ${fmtNum(held)} units of ${(pickedAsset.symbol||"").toUpperCase()}. Selling more than held isn't allowed.</div>`;
   }
+  refreshSizeSlider();
 }
 
 /* asset search (CoinGecko for crypto, Finnhub for stocks) — reusable */
@@ -1594,6 +1652,8 @@ document.getElementById("total").addEventListener("input",()=>syncTriad("total")
 document.getElementById("fee").addEventListener("input",updateTradeCalc);
 document.getElementById("cashAmount").addEventListener("input",updateTradeCalc);
 document.getElementById("useLive").onclick=useLivePrice;
+document.getElementById("pctSeg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(b) applySizePct(parseInt(b.dataset.pct,10)); });
+document.getElementById("pctSlider").addEventListener("input",e=>applySizePct(parseInt(e.target.value,10)));
 
 // adjust controls
 document.getElementById("adjTargetSeg").addEventListener("click",e=>{
