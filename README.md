@@ -114,7 +114,11 @@ A toggle at the top switches between two separate modes:
   - An elegant **progress ring** showing current equity as a % of that goal.
   - **Remaining to goal** and **gain still needed** (with PKR equivalents).
   - **Winning trades needed** — pick an expected profit % per trade (editable right on the card) and it computes, by compounding, how many such trades grow your current equity to the goal (`n = ⌈ln(goal / equity) / ln(1 + pct/100)⌉`). A "Reached!" banner appears once equity passes the target.
+  - **You'd end at** — beneath each goal, the actual amount you'd land on after the required winning trades (compounding overshoots the target, so this shows where you really end up).
+  - Goals are arranged by amount, smallest on the left to largest on the right.
   - **Add / Edit / Delete** goals from the Goal screen.
+
+Amount fields format with thousands separators as you type (`10000` shows as `10,000`).
 
   Goals sync across your devices (via cloud sync). The mode you're in is saved per device. Goal mode is fully separate from Portfolio mode.
 

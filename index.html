@@ -249,7 +249,7 @@
       <div id="cashFields" style="margin-top:14px">
         <div class="field">
           <label>Amount (USD)</label>
-          <input type="number" id="cashAmount" placeholder="3000" step="any" min="0" />
+          <input type="text" inputmode="decimal" class="amt" id="cashAmount" placeholder="3,000" autocomplete="off" />
         </div>
         <div id="cashWarn"></div>
       </div>
@@ -274,12 +274,12 @@
           <div class="hint" id="assetPicked"></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Quantity</label><input type="number" id="qty" step="any" min="0" placeholder="20" /></div>
-          <div class="field"><label>Price per unit (USD)</label><input type="number" id="price" step="any" min="0" placeholder="150" /></div>
+          <div class="field"><label>Quantity</label><input type="text" inputmode="decimal" class="amt" id="qty" placeholder="20" autocomplete="off" /></div>
+          <div class="field"><label>Price per unit (USD)</label><input type="text" inputmode="decimal" class="amt" id="price" placeholder="150" autocomplete="off" /></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Total (USD)</label><input type="number" id="total" step="any" min="0" placeholder="auto" /></div>
-          <div class="field"><label>Fee (USD, optional)</label><input type="number" id="fee" step="any" min="0" placeholder="0" /></div>
+          <div class="field"><label>Total (USD)</label><input type="text" inputmode="decimal" class="amt" id="total" placeholder="auto" autocomplete="off" /></div>
+          <div class="field"><label>Fee (USD, optional)</label><input type="text" inputmode="decimal" class="amt" id="fee" placeholder="0" autocomplete="off" /></div>
         </div>
         <div class="field" id="sizeField">
           <label id="sizeLabel">Size</label>
@@ -319,7 +319,7 @@
               <button data-dir="remove">Remove</button>
             </div>
           </div>
-          <div class="field"><label id="adjAmtLabel">Amount (USD)</label><input type="number" id="adjAmount" step="any" min="0" placeholder="0" /></div>
+          <div class="field"><label id="adjAmtLabel">Amount (USD)</label><input type="text" inputmode="decimal" class="amt" id="adjAmount" placeholder="0" autocomplete="off" /></div>
         </div>
         <div class="calc" id="adjustCalc">—</div>
         <div id="adjustWarn"></div>
@@ -358,6 +358,24 @@ const LS_KEY = "cryptoledger.v1";
 // Escape text before putting it into innerHTML (asset names/symbols come from
 // external APIs; notes are user-entered). Prevents HTML/script injection.
 const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// Comma-aware amount fields (type=text, class="amt"): read with stripNum, format live with formatAmt.
+const stripNum = (v) => parseFloat(String(v==null?"":v).replace(/,/g,""));
+function fmtAmtStr(v){   // number/string -> "10,000.5" (thousands separators, decimals kept)
+  if(v==null || v==="") return "";
+  let s=String(v), neg=/^-/.test(s); s=s.replace(/[^\d.]/g,"");
+  const dot=s.indexOf("."); let int=dot>=0?s.slice(0,dot):s, dec=dot>=0?s.slice(dot+1).replace(/\./g,""):null;
+  int=int.replace(/^0+(?=\d)/,""); const intFmt=int.replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  return (neg?"-":"")+(intFmt||(dec!=null?"0":""))+(dec!=null?"."+dec:"");
+}
+function formatAmt(el){   // reformat an .amt input in place, preserving the caret
+  const start=el.selectionStart!=null?el.selectionStart:el.value.length;
+  const digitsBefore=el.value.slice(0,start).replace(/[^\d]/g,"").length;
+  const out=fmtAmtStr(el.value);
+  el.value=out;
+  let pos=0, seen=0; while(pos<out.length && seen<digitsBefore){ if(/\d/.test(out[pos])) seen++; pos++; }
+  try{ el.setSelectionRange(pos,pos); }catch(e){}
+}
+function setAmt(el, val){ if(el) el.value = (val===""||val==null)?"":fmtAmtStr(val); }
 const fmtUSD = (n) => (n<0?"-$":"$") + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 // Per-unit price formatter: keeps precision for small (sub-cent) prices so cheap
 // tokens don't collapse to "$0.00". Used for prices/avg cost, not for USD totals.
@@ -666,6 +684,7 @@ function goalCardHTML(g, equity){
   const reached=equity>=target-1e-9;
   const gainNeededPct=equity>0 ? (target/equity-1)*100 : null;
   const nTrades=tradesToGoal(equity, target, pct);
+  const endAmount = nTrades!=null ? equity*Math.pow(1+pct/100, nTrades) : null;   // where you actually land
   return `<div class="card">
     <div class="flex" style="justify-content:space-between;gap:8px">
       <b style="font-size:16px">${esc(g.name||"Goal")}</b>
@@ -691,7 +710,9 @@ function goalCardHTML(g, equity){
           style="width:62px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius);text-align:right">
         <span class="muted"> % each</span>
         <div class="muted" style="font-size:12px;margin-top:6px">compounding ${pct}% each, reinvested, to reach ${fmtUSD(target)}</div>
-      </div>` : ``}
+      </div>
+      <div class="goalstat" style="margin-top:10px"><span class="k">You'd end at (after ${nTrades} ${nTrades===1?'trade':'trades'})</span>
+        <span class="v pos">${endAmount!=null?fmtUSD(endAmount):'—'}${endAmount!=null&&fmtSec(endAmount)?`<small>${fmtSec(endAmount)}</small>`:''}</span></div>` : ``}
   </div>`;
 }
 
@@ -711,7 +732,7 @@ function renderGoal(){
       <h2>${goalEditing==="new"?"New goal":"Edit goal"}</h2>
       <div style="padding:18px">
         <div class="field"><label>Name</label><input id="gfName" value="${(g.name||"").replace(/"/g,'&quot;')}" placeholder="e.g. Car fund, 100k milestone"></div>
-        <div class="field"><label>Target value (USD)</label><input id="gfTarget" type="number" step="any" min="0" value="${g.target||""}" placeholder="e.g. 10000"></div>
+        <div class="field"><label>Target value (USD)</label><input id="gfTarget" type="text" inputmode="decimal" class="amt" value="${g.target?fmtAmtStr(g.target):""}" placeholder="e.g. 10,000" autocomplete="off"></div>
         <div class="field"><label>Expected profit per winning trade (%)</label><input id="gfPct" type="number" step="any" min="0" value="${g.profitPct||10}"></div>
         <div class="flex" style="gap:10px"><button class="btn primary" id="gfSave">Save goal</button><button class="btn" id="gfCancel">Cancel</button></div>
       </div></div>`;
@@ -721,7 +742,7 @@ function renderGoal(){
     html += `<div class="panel">${emptyBlock("🎯","No goals yet","Add a target portfolio value to track progress toward it. Your current equity is "+fmtUSD(equity)+".")}</div>`;
   } else if(goals.length){
     html += `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(290px,1fr))">`
-          + goals.map(g=>goalCardHTML(g, equity)).join("") + `</div>`;
+          + [...goals].sort((a,b)=>(a.target||0)-(b.target||0)).map(g=>goalCardHTML(g, equity)).join("") + `</div>`;
   }
 
   viewEl.innerHTML = html;
@@ -731,7 +752,7 @@ function renderGoal(){
   const gfSave=document.getElementById("gfSave");
   if(gfSave) gfSave.onclick=()=>{
     const name=document.getElementById("gfName").value.trim();
-    const target=parseFloat(document.getElementById("gfTarget").value);
+    const target=stripNum(document.getElementById("gfTarget").value);
     const pct=parseFloat(document.getElementById("gfPct").value)||10;
     if(!(target>0)){ toast("Enter a positive target amount", true); return; }
     if(goalEditing==="new"){
@@ -1220,7 +1241,7 @@ function renderSettings(){
           <label class="flex" style="font-weight:600;color:var(--text);cursor:pointer;margin-bottom:8px">
             <input type="checkbox" id="setManual" style="width:auto"> Override rate manually
           </label>
-          <input type="number" id="setRate" step="any" min="0" placeholder="e.g. 285" />
+          <input type="text" inputmode="decimal" class="amt" id="setRate" placeholder="e.g. 285" autocomplete="off" />
           <div class="hint" id="rateHint"></div>
         </div>
         <div class="field">
@@ -1255,7 +1276,7 @@ function renderSettings(){
       : `Following the live market rate${fetched!=null?` (${fetched.toLocaleString(undefined,{maximumFractionDigits:2})})`:""}. Check the box to pin your own (e.g. your USDT conversion rate).`;
   }
   manualChk.checked = rateIsManual();
-  rateInp.value = rateIsManual() ? s.manualRate : (fetchedRate()!=null ? +fetchedRate().toFixed(2) : "");
+  rateInp.value = rateIsManual() ? fmtAmtStr(s.manualRate) : (fetchedRate()!=null ? fmtAmtStr(+fetchedRate().toFixed(2)) : "");
   manualChk.onchange = syncRateUI;
   syncRateUI();
   document.getElementById("saveSettings").onclick = ()=>{
@@ -1264,7 +1285,7 @@ function renderSettings(){
     const prevCur = state.settings.secondaryCurrency;
     state.settings.secondaryCurrency = document.getElementById("setCurrency").value;
     if(manualChk.checked){
-      const v = parseFloat(rateInp.value);
+      const v = stripNum(rateInp.value);
       if(!(v>0)){ toast("Enter a positive rate, or uncheck override", true); return; }
       state.settings.manualRate = v;
     } else {
@@ -1369,15 +1390,15 @@ function openModal(txn){
   modalAssetType = pickedAsset ? pickedAsset.type : "crypto";
   setSeg("txTypeSeg","type",modalType);
   setSeg("assetTypeSeg","atype",modalAssetType);
-  document.getElementById("cashAmount").value = txn && (txn.type==="DEPOSIT"||txn.type==="WITHDRAW")? txn.amount : "";
+  setAmt(document.getElementById("cashAmount"), txn && (txn.type==="DEPOSIT"||txn.type==="WITHDRAW")? txn.amount : "");
   document.getElementById("assetSearch").value = pickedAsset && txn && txn.type!=="ADJUST"? `${(pickedAsset.symbol||"").toUpperCase()} — ${pickedAsset.name||""}` : "";
-  document.getElementById("qty").value = txn && txn.qty!=null? txn.qty : "";
-  document.getElementById("price").value = txn && txn.price!=null? txn.price : "";
-  document.getElementById("total").value = (txn && txn.qty>0 && txn.price>0) ? +(txn.qty*txn.price).toFixed(2) : "";
+  setAmt(document.getElementById("qty"), txn && txn.qty!=null? txn.qty : "");
+  setAmt(document.getElementById("price"), txn && txn.price!=null? txn.price : "");
+  setAmt(document.getElementById("total"), (txn && txn.qty>0 && txn.price>0) ? +(txn.qty*txn.price).toFixed(2) : "");
   document.getElementById("pctSlider").value=0;
   document.querySelectorAll("#pctSeg button").forEach(b=>b.classList.remove("active"));
   document.getElementById("sizeHint").textContent="";
-  document.getElementById("fee").value = txn && txn.fee? txn.fee : "";
+  setAmt(document.getElementById("fee"), txn && txn.fee? txn.fee : "");
   document.getElementById("txNote").value = txn? (txn.note||"") : "";
   document.getElementById("txDate").value = toLocalInput(txn? txn.date : new Date().toISOString());
   document.getElementById("searchResults").classList.remove("open");
@@ -1386,7 +1407,7 @@ function openModal(txn){
   if(txn && txn.type==="ADJUST"){
     adjTarget = txn.target==="cash" ? "cash" : "asset";
     adjDir = (txn.target==="cash" ? txn.delta : txn.qtyDelta) >= 0 ? "add" : "remove";
-    document.getElementById("adjAmount").value = Math.abs(txn.target==="cash" ? txn.delta : txn.qtyDelta);
+    setAmt(document.getElementById("adjAmount"), Math.abs(txn.target==="cash" ? txn.delta : txn.qtyDelta));
   } else {
     adjTarget="cash"; adjDir="add"; document.getElementById("adjAmount").value="";
   }
@@ -1475,7 +1496,7 @@ function updateAdjustCalc(){
   if(modalType!=="ADJUST") return;
   const el=document.getElementById("adjustCalc"), warn=document.getElementById("adjustWarn");
   warn.innerHTML="";
-  const amt=parseFloat(document.getElementById("adjAmount").value)||0;
+  const amt=stripNum(document.getElementById("adjAmount").value)||0;
   const p=computePortfolio(editingId);
   if(adjTarget==="cash"){
     const after = p.cash + (adjDir==="add"? amt : -amt);
@@ -1501,18 +1522,18 @@ function toLocalInput(iso){
 // other value present, compute the third. (total = qty × price)
 function syncTriad(edited){
   const qEl=document.getElementById("qty"), pEl=document.getElementById("price"), tEl=document.getElementById("total");
-  const q=parseFloat(qEl.value), p=parseFloat(pEl.value), t=parseFloat(tEl.value);
+  const q=stripNum(qEl.value), p=stripNum(pEl.value), t=stripNum(tEl.value);
   const ok=x=>Number.isFinite(x)&&x>0;
-  const trim=(x,d)=>Number.isFinite(x)?String(+x.toFixed(d)):"";
+  const trim=(x,d)=>Number.isFinite(x)?+x.toFixed(d):"";
   if(edited==="qty"){
-    if(ok(q)&&ok(p)) tEl.value=trim(q*p,2);
-    else if(ok(q)&&ok(t)) pEl.value=trim(t/q,8);
+    if(ok(q)&&ok(p)) setAmt(tEl,trim(q*p,2));
+    else if(ok(q)&&ok(t)) setAmt(pEl,trim(t/q,8));
   } else if(edited==="price"){
-    if(ok(p)&&ok(q)) tEl.value=trim(q*p,2);
-    else if(ok(p)&&ok(t)) qEl.value=trim(t/p,8);
+    if(ok(p)&&ok(q)) setAmt(tEl,trim(q*p,2));
+    else if(ok(p)&&ok(t)) setAmt(qEl,trim(t/p,8));
   } else if(edited==="total"){
-    if(ok(t)&&ok(p)) qEl.value=trim(t/p,8);
-    else if(ok(t)&&ok(q)) pEl.value=trim(t/q,8);
+    if(ok(t)&&ok(p)) setAmt(qEl,trim(t/p,8));
+    else if(ok(t)&&ok(q)) setAmt(pEl,trim(t/q,8));
   }
   updateTradeCalc();
 }
@@ -1528,15 +1549,15 @@ function applySizePct(pct){
     if(!pickedAsset){ if(hint) hint.textContent="Pick a holding first, then choose a size."; return; }
     const pos=p.positions[pickedAsset.id]; const held=pos?pos.qty:0;
     const qty=+(held*pct/100).toFixed(8);
-    document.getElementById("qty").value = held>0 ? qty : "";
+    setAmt(document.getElementById("qty"), held>0 ? qty : "");
     syncTriad("qty");
     if(hint) hint.textContent = held>0 ? `Selling ${fmtNum(qty)} of ${fmtNum(held)} ${(pickedAsset.symbol||"").toUpperCase()} (${pct}%)` : "You don't hold this asset.";
   } else if(modalType==="BUY"){
     const cash=p.cash;
     const spend=+(cash*pct/100).toFixed(2);
-    document.getElementById("total").value = spend>0 ? spend : "";
+    setAmt(document.getElementById("total"), spend>0 ? spend : "");
     syncTriad("total");
-    const hasPrice=parseFloat(document.getElementById("price").value)>0;
+    const hasPrice=stripNum(document.getElementById("price").value)>0;
     if(hint) hint.textContent = `Spending ${fmtUSD(spend)} of ${fmtUSD(cash)} cash (${pct}%)` + (hasPrice?"":" — set a price to get quantity");
   }
 }
@@ -1545,8 +1566,8 @@ function refreshSizeSlider(){
   const slider=document.getElementById("pctSlider"); if(!slider) return;
   const p=computePortfolio(editingId); let pct=null;
   if(modalType==="SELL" && pickedAsset){ const pos=p.positions[pickedAsset.id]; const held=pos?pos.qty:0;
-    const q=parseFloat(document.getElementById("qty").value); if(held>0 && Number.isFinite(q)) pct=q/held*100; }
-  else if(modalType==="BUY"){ const t=parseFloat(document.getElementById("total").value); if(p.cash>0 && Number.isFinite(t)) pct=t/p.cash*100; }
+    const q=stripNum(document.getElementById("qty").value); if(held>0 && Number.isFinite(q)) pct=q/held*100; }
+  else if(modalType==="BUY"){ const t=stripNum(document.getElementById("total").value); if(p.cash>0 && Number.isFinite(t)) pct=t/p.cash*100; }
   if(pct!=null){ const cl=Math.max(0,Math.min(100,pct)); slider.value=Math.round(cl);
     document.querySelectorAll("#pctSeg button").forEach(b=>b.classList.toggle("active", b.dataset.pct===String(Math.round(cl)))); }
 }
@@ -1555,16 +1576,16 @@ function updateTradeCalc(){
   updateBalanceStrip();
   const cashWarn=document.getElementById("cashWarn"); cashWarn.innerHTML="";
   if(modalType==="WITHDRAW"){
-    const amt=parseFloat(document.getElementById("cashAmount").value)||0;
+    const amt=stripNum(document.getElementById("cashAmount").value)||0;
     const avail=computePortfolio(editingId).cash;
     if(amt>avail+1e-9) cashWarn.innerHTML=`<div class="warn">You only have ${fmtUSD(avail)} in cash to withdraw.</div>`;
   }
   const el=document.getElementById("tradeCalc"), warn=document.getElementById("tradeWarn");
   warn.innerHTML="";
   if(modalType==="DEPOSIT"||modalType==="WITHDRAW"||modalType==="ADJUST"){ return; }
-  const qty=parseFloat(document.getElementById("qty").value)||0;
-  const price=parseFloat(document.getElementById("price").value)||0;
-  const fee=parseFloat(document.getElementById("fee").value)||0;
+  const qty=stripNum(document.getElementById("qty").value)||0;
+  const price=stripNum(document.getElementById("price").value)||0;
+  const fee=stripNum(document.getElementById("fee").value)||0;
   const gross=qty*price;
   const p=computePortfolio(editingId);
   if(modalType==="BUY"){
@@ -1634,7 +1655,7 @@ async function useLivePrice(){
       const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(pickedAsset.symbol)}&token=${encodeURIComponent(key)}`);
       const j=await r.json(); price=j.c;
     }
-    if(price>0){ document.getElementById("price").value=price; syncTriad("price"); toast(`Live ${pickedAsset.symbol}: ${fmtPrice(price)}`); }
+    if(price>0){ setAmt(document.getElementById("price"), price); syncTriad("price"); toast(`Live ${pickedAsset.symbol}: ${fmtPrice(price)}`); }
     else toast("Couldn't get a live price", true);
   }catch(e){ toast("Live price failed: "+e.message, true); }
 }
@@ -1645,7 +1666,7 @@ function saveTransaction(){
   const note=document.getElementById("txNote").value.trim();
   let txn;
   if(modalType==="DEPOSIT"||modalType==="WITHDRAW"){
-    const amount=parseFloat(document.getElementById("cashAmount").value);
+    const amount=stripNum(document.getElementById("cashAmount").value);
     if(!(amount>0)){ toast("Enter a positive amount", true); return; }
     if(modalType==="WITHDRAW"){
       const avail=computePortfolio(editingId).cash;
@@ -1653,7 +1674,7 @@ function saveTransaction(){
     }
     txn={type:modalType, amount, date, note};
   }else if(modalType==="ADJUST"){
-    const amount=parseFloat(document.getElementById("adjAmount").value);
+    const amount=stripNum(document.getElementById("adjAmount").value);
     if(!(amount>0)){ toast("Enter a positive amount", true); return; }
     const p=computePortfolio(editingId);
     if(adjTarget==="cash"){
@@ -1668,9 +1689,9 @@ function saveTransaction(){
     }
   }else{
     if(!pickedAsset){ toast("Search and pick an asset", true); return; }
-    const qty=parseFloat(document.getElementById("qty").value);
-    const price=parseFloat(document.getElementById("price").value);
-    const fee=parseFloat(document.getElementById("fee").value)||0;
+    const qty=stripNum(document.getElementById("qty").value);
+    const price=stripNum(document.getElementById("price").value);
+    const fee=stripNum(document.getElementById("fee").value)||0;
     if(!(qty>0)){ toast("Enter a positive quantity", true); return; }
     if(!(price>0)){ toast("Enter a positive price", true); return; }
     if(modalType==="SELL"){
@@ -1814,6 +1835,8 @@ viewEl.addEventListener("click",e=>{
   if(e.target.id==="addBtn2") openModal(null);
 });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape" && overlay.classList.contains("open")) closeModal(); });
+// live thousands-separator formatting for any amount input (runs before field handlers)
+document.addEventListener("input",e=>{ if(e.target && e.target.classList && e.target.classList.contains("amt")) formatAmt(e.target); }, true);
 
 /* ---------- boot ---------- */
 applyTheme();
