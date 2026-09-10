@@ -118,6 +118,15 @@ A toggle at the top switches between two separate modes:
 
   Goals sync across your devices (via cloud sync). The mode you're in is saved per device. Goal mode is fully separate from Portfolio mode.
 
+## Date range
+
+The dashboard has a **date-range selector** (All · YTD · 30D · 90D · 1Y · Custom start/end). It reframes the performance figures to the window while your current positions stay as of now:
+
+- **Return · {range}**, **Realized P&L**, **Net invested**, and **Fees** are computed for the selected window (flows are summed exactly from the ledger; equity at the window's start/end comes from the recorded equity series).
+- **Cash**, **Holdings value**, and **Unrealized P&L** stay "now" (a range can't change what you hold today), and are tagged so.
+- The **equity chart** clips to the range, and the **Ledger** filters to it.
+- Selecting **All** is identical to the full-history view. If a window's start falls before your recorded price history (so its opening equity is valued at cost), the return is tagged **approx**.
+
 ## Equity over time (dashboard chart)
 
 Below Open Positions, the dashboard shows an **equity curve**. It's built from real numbers, never faked: earlier points are reconstructed from your ledger (cash + cost basis at each transaction date), and live equity **snapshots are recorded** each time prices refresh, so the curve fills in and reflects true market value as you keep using the app. It shows the current value, the change over the visible range, and the range's high/low. **Hover** (or touch-drag) anywhere on the chart to read the equity value and date at that point, and the **X-axis shows dated ticks** across the range. Equity history is kept per device (not synced), so each device builds its own live curve.

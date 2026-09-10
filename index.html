@@ -169,6 +169,11 @@
   :root[data-theme="dark"] .tag.BUY{color:#8fb4dc} :root[data-theme="dark"] .tag.SELL{color:#d29ab8} :root[data-theme="dark"] .tag.ADJUST{color:#c0a98f}
   :root[data-theme="dark"] .reached{background:rgba(76,175,116,.14);border-color:#356b4c;color:#8fd6a8}
   :root[data-theme="dark"] .warn{background:rgba(200,160,60,.12);border-color:#6a5828;color:#d8ba70}
+  /* date-range bar */
+  .rangebar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .rangechip{background:var(--panel);border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:999px;font-weight:600;font-size:12.5px}
+  .rangechip:hover{color:var(--text);border-color:var(--muted)}
+  .rangechip.active{background:var(--accent);border-color:var(--accent-dark);color:#fff}
   /* buy/sell size slider */
   input[type=range]{-webkit-appearance:none;appearance:none;height:6px;border-radius:999px;background:var(--chip);outline:none;padding:0;border:1px solid var(--border)}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--panel);box-shadow:var(--shadow)}
@@ -390,7 +395,7 @@ function defaultState(){
     favorites: [],                                   // watchlist: [{id,type,symbol,name,coingeckoId,img}]
     equityHistory: [],                               // device-local equity snapshots [{t,v}]
     dataUpdatedAt: 0,                                 // ms of last synced-data change (for newest-wins)
-    ui: { view:"dashboard", mode:"portfolio", theme:"light" }  // mode: portfolio|goal, theme: light|dark
+    ui: { view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null} }
   };
 }
 function normalizeState(s, keepUi){
@@ -398,8 +403,9 @@ function normalizeState(s, keepUi){
   const merged = Object.assign(d, s, {
     settings: Object.assign(d.settings, s.settings||{}),
     fx: Object.assign(d.fx, s.fx||{}),
-    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light"}, s.ui||{})
+    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}}, s.ui||{})
   });
+  if(!merged.ui.range) merged.ui.range={preset:"all", start:null, end:null};
   merged.goals = Array.isArray(s.goals) ? s.goals : [];
   // migrate the old single-goal shape ({target,profitPct}) into the list
   if(merged.goals.length===0 && s.goal && s.goal.target>0){
@@ -749,15 +755,32 @@ function renderGoal(){
 
 function renderDashboard(){
   const p = computePortfolio();
-  const tr = p.totalReturn, un = p.unrealized, rz = p.realized;
+  const un = p.unrealized;
+  const R = computeRange();
+  const isAll = R.isAll;
+  // headline return: period return when a range is set, else all-time total return
+  const headVal = isAll ? p.totalReturn : R.periodReturn;
+  const headPct = isAll ? p.totalReturnPct : R.periodReturnPct;
+  const headLabel = isAll ? "Total return vs original capital" : `Return · ${R.label}`;
+  const headSub = isAll
+    ? `${fmtPct(p.totalReturnPct)} on ${fmtUSD(p.netCapital)} net capital`
+    : `${fmtPct(R.periodReturnPct)} · ${fmtUSD(R.equityStart)} → ${fmtUSD(R.equityEnd)}${R.approx?' <span class="tag" style="border-color:var(--amber);color:var(--amber)">approx</span>':''}`;
+  const rz = isAll ? p.realized : R.realizedP;
+  const invLabel = isAll ? "Net capital" : `Net invested · ${R.label}`;
+  const invVal = isAll ? p.netCapital : R.netInvestedP;
+  const invSub = isAll ? `${fmtUSD(p.deposits)} in · ${fmtUSD(p.withdrawals)} out` : `${fmtUSD(R.depositsP)} in · ${fmtUSD(R.withdrawalsP)} out`;
+  const feeVal = isAll ? p.feesPaid : R.feesP;
+  const tag = isAll ? "" : `<span class="tag" style="font-size:9.5px">${R.label}</span>`;
+
   viewEl.innerHTML = `
+    ${rangeBarHTML()}
     <div class="grid cards" style="margin-bottom:16px">
       <div class="card hero">
         <div>
-          <div class="label">Total return vs original capital</div>
-          <div class="big ${cls(tr)}">${arrow(tr)}${fmtUSD(Math.abs(tr))}</div>
-          <div class="sub ${cls(tr)}">${fmtPct(p.totalReturnPct)} on ${fmtUSD(p.netCapital)} net capital</div>
-          ${secLine(tr,true)}
+          <div class="label">${headLabel}</div>
+          <div class="big ${cls(headVal)}">${arrow(headVal)}${fmtUSD(Math.abs(headVal))}</div>
+          <div class="sub ${cls(headVal)}">${headSub}</div>
+          ${secLine(headVal,true)}
         </div>
         <div>
           <div class="label">Current equity</div>
@@ -768,18 +791,18 @@ function renderDashboard(){
       </div>
     </div>
     <div class="grid cards">
-      <div class="card"><div class="label">Net capital</div><div class="value">${fmtUSD(p.netCapital)}</div>
-        <div class="sub muted">${fmtUSD(p.deposits)} in · ${fmtUSD(p.withdrawals)} out</div>${secLine(p.netCapital,false)}</div>
-      <div class="card"><div class="label">Cash available</div><div class="value ${p.cash<0?'neg':''}">${fmtUSD(p.cash)}</div>
+      <div class="card"><div class="label">${invLabel}</div><div class="value">${fmtUSD(invVal)}</div>
+        <div class="sub muted">${invSub}</div>${secLine(invVal,false)}</div>
+      <div class="card"><div class="label">Cash available <small class="muted">now</small></div><div class="value ${p.cash<0?'neg':''}">${fmtUSD(p.cash)}</div>
         <div class="sub muted">buying power</div>${secLine(p.cash,false)}</div>
-      <div class="card"><div class="label">Holdings value</div><div class="value">${fmtUSD(p.holdingsValue)}</div>
+      <div class="card"><div class="label">Holdings value <small class="muted">now</small></div><div class="value">${fmtUSD(p.holdingsValue)}</div>
         <div class="sub muted">cost ${fmtUSD(p.holdingsCost)}</div>${secLine(p.holdingsValue,false)}</div>
-      <div class="card"><div class="label">Realized P&L</div><div class="value ${cls(rz)}">${arrow(rz)}${fmtUSD(Math.abs(rz))}</div>
-        <div class="sub muted">locked-in from sells</div>${secLine(rz,true)}</div>
-      <div class="card"><div class="label">Unrealized P&L</div><div class="value ${cls(un)}">${arrow(un)}${fmtUSD(Math.abs(un))}</div>
+      <div class="card"><div class="label">Realized P&L ${isAll?"":tag}</div><div class="value ${cls(rz)}">${arrow(rz)}${fmtUSD(Math.abs(rz))}</div>
+        <div class="sub muted">${isAll?"locked-in from sells":`from ${R.sellsP} sell${R.sellsP===1?"":"s"} in range`}</div>${secLine(rz,true)}</div>
+      <div class="card"><div class="label">Unrealized P&L <small class="muted">now</small></div><div class="value ${cls(un)}">${arrow(un)}${fmtUSD(Math.abs(un))}</div>
         <div class="sub muted">open positions</div>${secLine(un,true)}</div>
-      <div class="card"><div class="label">Fees paid</div><div class="value">${fmtUSD(p.feesPaid)}</div>
-        <div class="sub muted">total trading fees</div>${secLine(p.feesPaid,false)}</div>
+      <div class="card"><div class="label">Fees ${isAll?"paid":tag}</div><div class="value">${fmtUSD(feeVal)}</div>
+        <div class="sub muted">${isAll?"total trading fees":"in range"}</div>${secLine(feeVal,false)}</div>
     </div>
 
     <div class="panel" style="margin-top:18px">
@@ -788,11 +811,12 @@ function renderDashboard(){
     </div>
 
     <div class="panel" style="margin-top:18px">
-      <h2>Equity over time <span class="spacer"></span><span class="muted price-fresh">${equityRangeLabel()}</span></h2>
+      <h2>Equity over time <span class="spacer"></span><span class="muted price-fresh">${R.label}</span></h2>
       ${equityChartHTML(p.equity)}
     </div>
   `;
   document.getElementById("freshHint").textContent = freshnessText(p.holdings);
+  wireRangeBar();
   wireEquityHover();
 }
 
@@ -821,14 +845,91 @@ function equitySeries(currentEquity){
     else if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); cash-=g; const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; }
     else if(t.type==="SELL"){ const g=t.qty*t.price-(t.fee||0); cash+=g; const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=t.qty; p.costBasis-=avg*t.qty; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
     else if(t.type==="ADJUST"){ if(t.target==="cash") cash+=t.delta; else { const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} } }
-    pts.push({ t:new Date(t.date).getTime(), v:+(cash+costTotal()).toFixed(2) });
+    pts.push({ t:new Date(t.date).getTime(), v:+(cash+costTotal()).toFixed(2), kind:"book" });
   }
-  for(const s of (state.equityHistory||[])) pts.push({ t:s.t, v:s.v });
-  pts.push({ t:Date.now(), v:+(currentEquity!=null?currentEquity:computePortfolio().equity).toFixed(2) });
+  for(const s of (state.equityHistory||[])) pts.push({ t:s.t, v:s.v, kind:"live" });
+  pts.push({ t:Date.now(), v:+(currentEquity!=null?currentEquity:computePortfolio().equity).toFixed(2), kind:"live" });
   pts.sort((a,b)=>a.t-b.t);
   // collapse points sharing the same timestamp (keep the last)
   const out=[]; for(const p of pts){ if(out.length && out[out.length-1].t===p.t) out[out.length-1]=p; else out.push(p); }
   return out;
+}
+// Equity value at time t from the series (step: last point <= t). Before inception -> 0.
+function equityAt(t){
+  const s=equitySeries();
+  if(!s.length) return {v:0, kind:"book"};
+  if(t < s[0].t) return {v:0, kind:"book"};
+  let best=s[0]; for(const p of s){ if(p.t<=t) best=p; else break; }
+  return {v:best.v, kind:best.kind};
+}
+// Resolve the active date range to concrete timestamps + a label.
+function activeRange(){
+  const r=(state.ui && state.ui.range) || {preset:"all"};
+  const now=Date.now(), D=86400000;
+  const startOfDay=ms=>{ const d=new Date(ms); d.setHours(0,0,0,0); return d.getTime(); };
+  const endOfDay=ms=>{ const d=new Date(ms); d.setHours(23,59,59,999); return d.getTime(); };
+  let startTs=-Infinity, endTs=now, label="All time";
+  switch(r.preset){
+    case "30d": startTs=now-30*D; label="Last 30 days"; break;
+    case "90d": startTs=now-90*D; label="Last 90 days"; break;
+    case "1y":  startTs=now-365*D; label="Last 12 months"; break;
+    case "ytd": startTs=new Date(new Date().getFullYear(),0,1).getTime(); label="Year to date"; break;
+    case "custom":
+      startTs = r.start ? startOfDay(new Date(r.start+"T00:00:00").getTime()) : -Infinity;
+      endTs   = r.end   ? Math.min(now, endOfDay(new Date(r.end+"T00:00:00").getTime())) : now;
+      { const f=t=> (t===-Infinity?"start":new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'}));
+        label = `${f(startTs)} – ${new Date(endTs).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'})}`; }
+      break;
+    default: startTs=-Infinity; endTs=now; label="All time";
+  }
+  return { preset:r.preset||"all", startTs, endTs, label, isAll:(r.preset||"all")==="all" };
+}
+// Period-scoped figures for the active range (flows exact from the ledger,
+// equity boundaries from the honest series).
+function computeRange(){
+  const R=activeRange();
+  const txns=[...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
+  const pos={};
+  let depositsP=0, withdrawalsP=0, realizedP=0, feesP=0, buysP=0, sellsP=0;
+  for(const t of txns){
+    const ts=new Date(t.date).getTime(); const inWin = ts>=R.startTs && ts<=R.endTs;
+    if(t.type==="DEPOSIT"){ if(inWin) depositsP+=t.amount; }
+    else if(t.type==="WITHDRAW"){ if(inWin) withdrawalsP+=t.amount; }
+    else if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; if(inWin){ feesP+=t.fee||0; buysP++; } }
+    else if(t.type==="SELL"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; const basisSold=avg*t.qty; const rz=(t.qty*t.price-(t.fee||0))-basisSold; p.qty-=t.qty; p.costBasis-=basisSold; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} if(inWin){ realizedP+=rz; feesP+=t.fee||0; sellsP++; } }
+    else if(t.type==="ADJUST"){ if(t.target!=="cash"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} } }
+  }
+  const sInfo=equityAt(R.startTs===-Infinity? -Infinity : R.startTs);
+  const eInfo=equityAt(R.endTs);
+  const equityStart=sInfo.v, equityEnd=eInfo.v;
+  const netInvestedP=depositsP-withdrawalsP;
+  const periodReturn=equityEnd-equityStart-netInvestedP;
+  const base=equityStart+Math.max(0,depositsP);
+  const periodReturnPct= base>1e-9 ? periodReturn/base*100 : 0;
+  const approx = sInfo.kind==="book" && equityStart>0;   // start valued at cost, not a live snapshot
+  return Object.assign(R, { depositsP,withdrawalsP,netInvestedP,realizedP,feesP,buysP,sellsP, equityStart,equityEnd,periodReturn,periodReturnPct, approx });
+}
+// Date-range selector bar (presets + custom dates).
+function rangeBarHTML(){
+  const r=(state.ui.range)||{preset:"all"};
+  const presets=[["all","All"],["ytd","YTD"],["30d","30D"],["90d","90D"],["1y","1Y"],["custom","Custom"]];
+  const chips=presets.map(([k,lbl])=>`<button class="rangechip ${r.preset===k?'active':''}" data-range="${k}">${lbl}</button>`).join("");
+  const inp="background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);margin-left:5px";
+  const custom = r.preset==="custom" ? `
+    <div class="flex" style="gap:12px;flex-wrap:wrap;margin-top:9px">
+      <label class="muted" style="font-size:12.5px">From<input type="date" id="rangeStart" value="${r.start||""}" style="${inp}"></label>
+      <label class="muted" style="font-size:12.5px">To<input type="date" id="rangeEnd" value="${r.end||""}" style="${inp}"></label>
+    </div>` : "";
+  return `<div class="rangebar"><span class="muted" style="font-size:12px;margin-right:4px">Range</span>${chips}${custom}</div>`;
+}
+function wireRangeBar(){
+  viewEl.querySelectorAll("[data-range]").forEach(b=>b.onclick=()=>{
+    state.ui.range=state.ui.range||{preset:"all"}; state.ui.range.preset=b.dataset.range;
+    persistLocal(); renderDashboard();
+  });
+  const rs=document.getElementById("rangeStart"), re=document.getElementById("rangeEnd");
+  if(rs) rs.onchange=()=>{ state.ui.range.start=rs.value||null; persistLocal(); renderDashboard(); };
+  if(re) re.onchange=()=>{ state.ui.range.end=re.value||null; persistLocal(); renderDashboard(); };
 }
 function equityRangeLabel(){
   const s=equitySeries();
@@ -843,8 +944,16 @@ function equityTickLabel(t, rangeDays){
   return d.toLocaleDateString([], {month:'short',year:'2-digit'});
 }
 function equityChartHTML(currentEquity){
-  const s=equitySeries(currentEquity);
-  if(s.length<2){ lastEquityChart=null; return emptyBlock("📉","Not enough history yet","The equity curve fills in as you record trades and refresh prices over time."); }
+  const R=activeRange();
+  let s=equitySeries(currentEquity);
+  if(!R.isAll){
+    s=s.filter(p=>p.t>=R.startTs && p.t<=R.endTs);
+    if(R.startTs!==-Infinity) s.unshift({t:R.startTs, v:equityAt(R.startTs).v, kind:"book"});
+    s.push({t:R.endTs, v:equityAt(R.endTs).v, kind:"live"});
+    s.sort((a,b)=>a.t-b.t);
+    const dd=[]; for(const p of s){ if(dd.length && dd[dd.length-1].t===p.t) dd[dd.length-1]=p; else dd.push(p);} s=dd;
+  }
+  if(s.length<2){ lastEquityChart=null; return emptyBlock("📉","Not enough history in this range","Pick a wider range, or record more trades/price refreshes over time."); }
   const W=800, H=170, padL=6, padR=6, padT=14, padB=16;
   const w=W-padL-padR, h=H-padT-padB;
   const tMin=s[0].t, tMax=s[s.length-1].t;
@@ -1034,7 +1143,10 @@ async function doFavSearch(q){
 }
 
 function renderLedger(){
-  const txns = [...state.transactions].sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
+  const R = activeRange();
+  const txns = [...state.transactions]
+    .filter(t=>{ if(R.isAll) return true; const ts=new Date(t.date).getTime(); return ts>=R.startTs && ts<=R.endTs; })
+    .sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
   const rows = txns.map(t=>{
     let detail="", amount=0, showNote=false;
     if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
@@ -1063,13 +1175,13 @@ function renderLedger(){
   }).join("");
   viewEl.innerHTML = `
     <div class="panel">
-      <h2>Transaction ledger <span class="spacer"></span>
+      <h2>Transaction ledger ${R.isAll?"":`<span class="tag" style="font-size:9.5px">${R.label}</span>`}<span class="spacer"></span>
         <button class="btn sm" id="exportBtn">⭳ Export JSON</button>
         <button class="btn sm" id="importBtn">⭱ Import JSON</button>
         <button class="btn sm primary" id="addBtn2">+ Add</button>
       </h2>
       ${txns.length? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-        : emptyBlock("🧾","No transactions yet","Start by adding a Deposit for your initial capital.")}
+        : emptyBlock("🧾", R.isAll?"No transactions yet":"No transactions in this range", R.isAll?"Start by adding a Deposit for your initial capital.":"Change the date range on the Dashboard, or pick All.")}
     </div>`;
 }
 
