@@ -401,6 +401,7 @@ const arrow = (n) => n>0 ? '<span class="delta">▲</span>' : (n<0 ? '<span clas
 let state = load();
 let goalEditing = null;   // null | "new" | goalId — controls the goal add/edit form
 let lastEquityChart = null;   // scale params for the equity-chart hover
+let _lastSyncSig = null;  // signature of last-seen synced data (set after load, below)
 
 function defaultState(){
   return {
@@ -443,10 +444,19 @@ function load(){
   }catch(e){ return defaultState(); }
 }
 function persistLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){} }
+// Signature of ONLY the synced data (excludes fx/prices/ui/equityHistory), so
+// opening the app or refreshing prices does not falsely mark this device "newest".
+function syncSignature(){
+  return JSON.stringify({ t:state.transactions, a:state.assets, s:state.settings, g:state.goals, f:state.favorites });
+}
 function save(){
-  state.dataUpdatedAt = Date.now();   // stamp this change so newest-wins sync can compare
+  const sig = syncSignature();
+  let changed = false;
+  if(_lastSyncSig===null){ _lastSyncSig = sig; }                 // baseline
+  else if(sig !== _lastSyncSig){ changed = true; state.dataUpdatedAt = Date.now(); _lastSyncSig = sig; }
   persistLocal();
-  if(window.Cloud && window.Cloud.onLocalSave) window.Cloud.onLocalSave();  // debounced cloud push
+  // only push to the cloud when the synced data actually changed
+  if(changed && window.Cloud && window.Cloud.onLocalSave) window.Cloud.onLocalSave();
 }
 
 /* ---------- cloud sync bridge (used by the Firebase module at the bottom) ---------- */
@@ -473,6 +483,7 @@ function applyCloudState(remote){
     fx: state.fx,
     prices: state.prices
   }, state.ui);
+  _lastSyncSig = syncSignature();   // loaded cloud data is the new baseline (no echo back)
   persistLocal();   // cache only — do NOT echo back to cloud
   render(); updateFxChip();
 }
@@ -1839,6 +1850,7 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape" && overlay.classLis
 document.addEventListener("input",e=>{ if(e.target && e.target.classList && e.target.classList.contains("amt")) formatAmt(e.target); }, true);
 
 /* ---------- boot ---------- */
+_lastSyncSig = syncSignature();   // baseline so opening the app isn't seen as a data change
 applyTheme();
 recordEquityPoint();
 render();
