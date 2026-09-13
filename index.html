@@ -487,7 +487,8 @@ function applyCloudState(remote){
   persistLocal();   // cache only — do NOT echo back to cloud
   render(); updateFxChip();
 }
-window.getCloudPayload=getCloudPayload; window.getLocalTxnCount=getLocalTxnCount; window.applyCloudState=applyCloudState; window.getLocalUpdatedAt=getLocalUpdatedAt;
+function bumpDataUpdatedAt(){ state.dataUpdatedAt=Date.now(); _lastSyncSig=syncSignature(); persistLocal(); }
+window.getCloudPayload=getCloudPayload; window.getLocalTxnCount=getLocalTxnCount; window.applyCloudState=applyCloudState; window.getLocalUpdatedAt=getLocalUpdatedAt; window.bumpDataUpdatedAt=bumpDataUpdatedAt;
 // Header chip + the Settings cloud panel, refreshed whenever cloud state changes.
 function setCloudStatus(text){
   const c = window.Cloud||{}; if(text!=null) c.status=text;
@@ -507,9 +508,16 @@ function renderCloudBox(){
   }
   if(c.signedIn){
     box.innerHTML=`<div class="flex" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
-      <div>Signed in as <b>${c.email||"account"}</b><div class="hint" style="margin-top:2px">Status: ${c.status||"synced"} · changes sync automatically across your devices.</div></div>
-      <button class="btn sm" id="cloudSignOut">Sign out</button></div>`;
+      <div>Signed in as <b>${esc(c.email||"account")}</b><div class="hint" style="margin-top:2px">Status: ${esc(c.status||"synced")} · changes sync automatically across your devices.</div></div>
+      <button class="btn sm" id="cloudSignOut">Sign out</button></div>
+      <div class="flex" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn sm" id="cloudPush">⭱ Upload this device → cloud</button>
+        <button class="btn sm" id="cloudPull">⭳ Load cloud → this device</button>
+      </div>
+      <div class="hint" style="margin-top:6px">Use these if two devices got out of sync: pick the device with the correct data and Upload, then Load on the other.</div>`;
     const b=box.querySelector("#cloudSignOut"); if(b) b.onclick=()=>window.Cloud.signOut();
+    const pu=box.querySelector("#cloudPush"); if(pu) pu.onclick=()=>{ if(confirm("Upload THIS device's data to the cloud, overwriting the cloud copy?")) window.Cloud.forcePush && window.Cloud.forcePush(); };
+    const pl=box.querySelector("#cloudPull"); if(pl) pl.onclick=()=>{ if(confirm("Load the cloud copy onto THIS device, replacing what's here?")) window.Cloud.forcePull && window.Cloud.forcePull(); };
   } else {
     box.innerHTML=`<button class="btn primary" id="cloudSignIn">Sign in with Google</button>
       <div class="hint" style="margin-top:8px">Sign in to sync your ledger across all your devices in real time.${c.status?` (${c.status})`:""}</div>`;
@@ -1913,6 +1921,20 @@ if(!configured){
       if(applying || !ref) return;
       window.setCloudStatus("saving…");
       clearTimeout(pushTimer); pushTimer=setTimeout(pushNow, 800);
+    };
+    // manual overrides for resolving two devices that drifted apart
+    window.Cloud.forcePush = ()=>{
+      if(!ref){ alert("Sign in first."); return; }
+      window.bumpDataUpdatedAt && window.bumpDataUpdatedAt();   // make this device unambiguously newest
+      window.setCloudStatus("uploading…"); pushNow();
+    };
+    window.Cloud.forcePull = async ()=>{
+      if(!ref){ alert("Sign in first."); return; }
+      window.setCloudStatus("loading…");
+      try{ const snap=await getDoc(ref);
+        if(snap.exists()){ applying=true; try{ window.applyCloudState(snap.data()); } finally{ applying=false; } window.setCloudStatus("loaded from cloud"); }
+        else { window.setCloudStatus("cloud is empty"); }
+      }catch(e){ window.setCloudStatus("sync error"); }
     };
 
     function subscribe(){
