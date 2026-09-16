@@ -1187,6 +1187,17 @@ function renderLedger(){
   const txns = [...state.transactions]
     .filter(t=>{ if(R.isAll) return true; const ts=new Date(t.date).getTime(); return ts>=R.startTs && ts<=R.endTs; })
     .sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
+  // realized P/L per sell (chronological replay over ALL history for correct cost basis)
+  const realizedByTxn = (function(){
+    const chron=[...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
+    const pos={}, m={};
+    for(const t of chron){
+      if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; }
+      else if(t.type==="SELL"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; const basisSold=avg*t.qty; m[t.id]=(t.qty*t.price-(t.fee||0))-basisSold; p.qty-=t.qty; p.costBasis-=basisSold; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
+      else if(t.type==="ADJUST" && t.target!=="cash"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
+    }
+    return m;
+  })();
   const rows = txns.map(t=>{
     let detail="", amount=0, showNote=false;
     if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
@@ -1202,11 +1213,13 @@ function renderLedger(){
       detail=`${fmtNum(t.qty)} ${esc((a.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
       amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
     }
+    const pl = (t.type==="SELL" && realizedByTxn[t.id]!=null) ? realizedByTxn[t.id] : null;
     return `<tr>
       <td><small class="muted">${new Date(t.date).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></td>
       <td><span class="tag ${t.type}">${t.type}</span></td>
       <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
       <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
+      <td class="${pl==null?'muted':cls(pl)}">${pl==null?'—':arrow(pl)+fmtUSD(Math.abs(pl))}</td>
       <td style="width:1px">
         <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
         <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
@@ -1220,7 +1233,7 @@ function renderLedger(){
         <button class="btn sm" id="importBtn">⭱ Import JSON</button>
         <button class="btn sm primary" id="addBtn2">+ Add</button>
       </h2>
-      ${txns.length? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ${txns.length? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th>Realized P/L</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
         : emptyBlock("🧾", R.isAll?"No transactions yet":"No transactions in this range", R.isAll?"Start by adding a Deposit for your initial capital.":"Change the date range on the Dashboard, or pick All.")}
     </div>`;
 }
