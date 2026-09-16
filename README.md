@@ -135,7 +135,9 @@ The dashboard has a **date-range selector** (All · YTD · 30D · 90D · 1Y · C
 
 ## Equity over time (dashboard chart)
 
-Below Open Positions, the dashboard shows an **equity curve**. It's built from real numbers, never faked: earlier points are reconstructed from your ledger (cash + cost basis at each transaction date), and live equity **snapshots are recorded** each time prices refresh, so the curve fills in and reflects true market value as you keep using the app. It shows the current value, the change over the visible range, and the range's high/low. **Hover** (or touch-drag) anywhere on the chart to read the equity value and date at that point, and the **X-axis shows dated ticks** across the range. Equity history is kept per device (not synced), so each device builds its own live curve.
+Below Open Positions, the dashboard shows an **equity curve plotted against your net capital**. Two lines: a solid **equity** line and a dashed **net capital** line (deposits − withdrawals over time). The shaded band between them is your **profit (green) or loss (red)** — so when you deposit more, both lines step up together and it doesn't look like a gain. Hover to read equity, net capital, and P/L at any point.
+
+It's built from real numbers, never faked: earlier equity points are reconstructed from your ledger (cash + cost basis at each transaction date), and live equity **snapshots are recorded** each time prices refresh, so the curve fills in and reflects true market value as you keep using the app. **Hover** (or touch-drag) anywhere on the chart to read the equity value and date at that point, and the **X-axis shows dated ticks** across the range. Equity history is kept per device (not synced), so each device builds its own live curve.
 
 ## Break-even vs net capital
 

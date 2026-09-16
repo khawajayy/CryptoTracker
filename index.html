@@ -983,6 +983,12 @@ function equityTickLabel(t, rangeDays){
   if(rangeDays<365) return d.toLocaleDateString([], {month:'short',day:'2-digit'});
   return d.toLocaleDateString([], {month:'short',year:'2-digit'});
 }
+// Net capital (deposits − withdrawals) as of time t.
+function netCapitalAt(t){
+  let n=0;
+  for(const tx of state.transactions){ const ts=new Date(tx.date).getTime(); if(ts<=t){ if(tx.type==="DEPOSIT") n+=tx.amount; else if(tx.type==="WITHDRAW") n-=tx.amount; } }
+  return n;
+}
 function equityChartHTML(currentEquity){
   const R=activeRange();
   let s=equitySeries(currentEquity);
@@ -997,50 +1003,60 @@ function equityChartHTML(currentEquity){
   const W=800, H=170, padL=6, padR=6, padT=14, padB=16;
   const w=W-padL-padR, h=H-padT-padB;
   const tMin=s[0].t, tMax=s[s.length-1].t;
-  const vals=s.map(p=>p.v); let vMin=Math.min(...vals), vMax=Math.max(...vals);
+  const NC=s.map(p=>netCapitalAt(p.t));                       // net capital at each point
+  const allv=s.map(p=>p.v).concat(NC);
+  let vMin=Math.min(...allv), vMax=Math.max(...allv);
   if(vMin===vMax){ vMin-=Math.max(1,Math.abs(vMin)*0.02); vMax+=Math.max(1,Math.abs(vMax)*0.02); }
   const padv=(vMax-vMin)*0.10; vMin-=padv; vMax+=padv;
   const X=t=> padL + (tMax===tMin?0:(t-tMin)/(tMax-tMin))*w;
   const Y=v=> padT + (1-(v-vMin)/(vMax-vMin))*h;
-  const line=s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
-  const area=`${line} L${X(s[s.length-1].t).toFixed(1)},${(padT+h).toFixed(1)} L${X(s[0].t).toFixed(1)},${(padT+h).toFixed(1)} Z`;
-  const first=s[0].v, last=s[s.length-1].v, chg=last-first, chgPct=first!==0?chg/Math.abs(first)*100:0;
-  const up=chg>=0;
-  const stroke=up?"var(--green)":"var(--red)";
+  const eqLine=s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
+  const ncLine=s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(NC[i]).toFixed(1)}`).join(" ");
 
-  // expose scale for the hover handler
-  lastEquityChart={ series:s, W,H,padL,padR,padT,padB,w,h,tMin,tMax,vMin,vMax,stroke };
+  // profit/loss band between equity and net-capital lines (split at crossings)
+  const polys=[];
+  for(let i=0;i<s.length-1;i++){
+    const x0=s[i].t,x1=s[i+1].t,e0=s[i].v,e1=s[i+1].v,n0=NC[i],n1=NC[i+1];
+    const d0=e0-n0,d1=e1-n1;
+    const poly=(ax,ae,bx,be,bn,an,up)=>({up, d:`M${X(ax).toFixed(1)},${Y(ae).toFixed(1)} L${X(bx).toFixed(1)},${Y(be).toFixed(1)} L${X(bx).toFixed(1)},${Y(bn).toFixed(1)} L${X(ax).toFixed(1)},${Y(an).toFixed(1)} Z`});
+    if((d0>=0&&d1>=0)||(d0<=0&&d1<=0)){ polys.push(poly(x0,e0,x1,e1,n1,n0,(d0+d1)>=0)); }
+    else { const f=d0/(d0-d1); const xc=x0+(x1-x0)*f, ec=e0+(e1-e0)*f, nc=n0+(n1-n0)*f;
+      polys.push(poly(x0,e0,xc,ec,nc,n0,d0>=0)); polys.push(poly(xc,ec,x1,e1,n1,nc,d1>=0)); }
+  }
+  const band=polys.map(p=>`<path d="${p.d}" fill="${p.up?'var(--green)':'var(--red)'}" fill-opacity="0.15"/>`).join("");
 
-  // X-axis day ticks (evenly spaced in time)
+  const last=s[s.length-1].v, curNet=NC[NC.length-1], ret=last-curNet;
+  lastEquityChart={ series:s, NC, W,H,padL,padR,padT,padB,w,h,tMin,tMax,vMin,vMax, stroke:"var(--text)" };
+
   const rangeDays=(tMax-tMin)/86400000;
-  const ticks=[]; const N=5;
-  for(let i=0;i<N;i++){ const f=i/(N-1); const t=tMin+f*(tMax-tMin); const leftPct=(X(t)/W*100);
+  const ticks=[]; const NT=5;
+  for(let i=0;i<NT;i++){ const f=i/(NT-1); const t=tMin+f*(tMax-tMin); const leftPct=(X(t)/W*100);
     ticks.push(`<span style="left:${leftPct.toFixed(2)}%">${equityTickLabel(t,rangeDays)}</span>`); }
 
   return `
     <div style="padding:14px 16px 10px">
       <div class="flex" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:8px">
         <div><span class="bignum">${fmtUSD(last)}</span>
-          <span class="${cls(chg)}" style="font-weight:700;margin-left:6px">${arrow(chg)}${fmtUSD(Math.abs(chg))} (${fmtPct(chgPct)})</span>
-          <div class="muted" style="font-size:12px">change over shown range</div></div>
-        <div class="muted" style="font-size:12px;text-align:right">high ${fmtUSD(Math.max(...vals))}<br>low ${fmtUSD(Math.min(...vals))}</div>
+          <span class="${cls(ret)}" style="font-weight:700;margin-left:6px">${arrow(ret)}${fmtUSD(Math.abs(ret))}</span>
+          <div class="muted" style="font-size:12px">equity vs ${fmtUSD(curNet)} net capital</div></div>
+        <div style="font-size:11.5px;text-align:right">
+          <span style="color:var(--text)">▬ Equity</span> &nbsp; <span class="muted">╌ Net capital</span>
+          <div class="muted" style="margin-top:2px"><span class="pos">▮</span> profit &nbsp;<span class="neg">▮</span> loss</div></div>
       </div>
       <div class="eqchart" id="eqChart">
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block">
-          <defs><linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0.22"/>
-            <stop offset="100%" stop-color="${up?'var(--green)':'var(--red)'}" stop-opacity="0"/></linearGradient></defs>
           <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="var(--border)" stroke-width="1"/>
           <line x1="${padL}" y1="${padT+h}" x2="${W-padR}" y2="${padT+h}" stroke="var(--border)" stroke-width="1"/>
-          <path d="${area}" fill="url(#eqFill)"/>
-          <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+          ${band}
+          <path d="${ncLine}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>
+          <path d="${eqLine}" fill="none" stroke="var(--text)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
         </svg>
         <div class="eqcross" id="eqCross" hidden></div>
         <div class="eqdot" id="eqDot" hidden></div>
         <div class="eqtip" id="eqTip" hidden></div>
         <div class="eqx">${ticks.join("")}</div>
       </div>
-      <div class="muted" style="font-size:11.5px;margin-top:6px">Hover to read a value. Live points are recorded as you refresh prices; earlier points are valued at cost.</div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">The band is your profit (green) or loss (red): equity above or below the capital you've put in. A deposit lifts both lines equally, so it doesn't look like a gain.</div>
     </div>`;
 }
 // Attach hover crosshair + tooltip to the equity chart (called after each dashboard render).
@@ -1054,14 +1070,19 @@ function wireEquityHover(){
     const svgX=(clientX-rect.left)/rect.width*m.W;
     const tFrac=Math.max(0,Math.min(1,(svgX-m.padL)/m.w));
     const t=m.tMin+tFrac*(m.tMax-m.tMin);
-    let best=m.series[0]; for(const p of m.series){ if(Math.abs(p.t-t)<Math.abs(best.t-t)) best=p; }
+    let bi=0; for(let i=0;i<m.series.length;i++){ if(Math.abs(m.series[i].t-t)<Math.abs(m.series[bi].t-t)) bi=i; }
+    const best=m.series[bi], nc=(m.NC&&m.NC[bi]!=null)?m.NC[bi]:null;
     const bx=Xv(best.t)/m.W*rect.width, by=Yv(best.v);
     cross.style.left=bx+"px"; cross.hidden=false;
     dot.style.left=bx+"px"; dot.style.top=by+"px"; dot.style.background=m.stroke; dot.hidden=false;
-    tip.innerHTML=`<b>${fmtUSD(best.v)}</b> <span class="muted">${new Date(best.t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'})}</span>`;
+    const pl = nc!=null ? best.v-nc : null;
+    tip.innerHTML=`<div class="muted" style="font-size:11px">${new Date(best.t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'})}</div>`+
+      `<b>${fmtUSD(best.v)}</b> <span class="muted">equity</span>`+
+      (nc!=null?`<br><span class="muted">${fmtUSD(nc)} net capital</span>`+
+        `<br><span class="${cls(pl)}">${arrow(pl)}${fmtUSD(Math.abs(pl))} P/L</span>`:``);
     tip.hidden=false;
-    const tw=tip.offsetWidth||130; let tl=bx+12; if(tl+tw>rect.width) tl=bx-tw-12;
-    tip.style.left=Math.max(0,tl)+"px"; tip.style.top=Math.max(0,by-32)+"px";
+    const tw=tip.offsetWidth||130, th=tip.offsetHeight||54; let tl=bx+12; if(tl+tw>rect.width) tl=bx-tw-12;
+    tip.style.left=Math.max(0,tl)+"px"; tip.style.top=Math.max(0, Math.min(by-th-8, m.padT+m.h-th))+"px";
   }
   function hide(){ cross.hidden=true; dot.hidden=true; tip.hidden=true; }
   c.onmousemove=e=>move(e.clientX);
