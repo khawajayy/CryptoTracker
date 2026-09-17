@@ -1,5 +1,7 @@
 # CryptoLedger
 
+[![CI](https://github.com/khawajayy/CryptoTracker/actions/workflows/ci.yml/badge.svg)](https://github.com/khawajayy/CryptoTracker/actions/workflows/ci.yml)
+
 A personal crypto **and** stocks trade ledger + portfolio tracker. Single HTML file, no build step. Works fully offline (data in your browser's localStorage), with **optional cloud sync** (Firebase) so the same ledger follows you across devices.
 
 ## Run it
@@ -35,6 +37,8 @@ firebase login
 firebase deploy
 ```
 This publishes the site **and** the Firestore security rules (`firestore.rules`, which lets each user read/write only their own data). The command prints your live URL, e.g. `https://your-project.web.app`.
+
+Once the CI/CD pipeline below is set up, this manual step is only needed for the very first deploy — after that, merges to `main` deploy automatically.
 
 **7. Use it**
 - Open that URL on any device → **Settings → Cloud sync → Sign in with Google**. The first device uploads your existing data; other devices then load and stay in sync automatically. The header shows a `☁` status.
@@ -162,3 +166,24 @@ Change it in **Settings → Secondary currency** (PKR, INR, AED, GBP, EUR, CAD, 
 ## Backup
 
 Ledger tab → **Export JSON** / **Import JSON**. Keep a backup, since clearing browser data wipes localStorage.
+
+## Testing & CI/CD
+
+The app itself stays a single dependency-free `index.html`, but the repo has a small dev-only test setup on top of it:
+
+- **[Playwright](https://playwright.dev/) end-to-end tests** ([tests/e2e](tests/e2e)) drive the real page in a headless browser — depositing, buying, selling, and checking the numbers the app renders, including the realized-P&L scenario worked through in this README. All third-party price/FX APIs are mocked in tests, so runs are deterministic and don't depend on the internet, an API key, or rate limits.
+- Run them locally with:
+  ```bash
+  npm install
+  npx playwright install --with-deps chromium
+  npm run test:e2e
+  ```
+
+**Pipeline:** every push and pull request against `main` runs the full E2E suite via [GitHub Actions](.github/workflows/ci.yml). A merge to `main` only deploys to Firebase Hosting if that run passes — a broken build never reaches production.
+
+Workflow for making a change:
+1. Create a branch, make the change.
+2. Open a pull request into `main` — CI runs automatically and reports pass/fail on the PR.
+3. Merge once green. The `main` branch then re-runs the tests and, if they pass, deploys automatically.
+
+**One-time setup for the deploy step** (not needed to just run tests): the workflow deploys via a Firebase service account stored as GitHub secrets on the repo (`FIREBASE_SERVICE_ACCOUNT`, `FIREBASE_PROJECT_ID`) — generate one from Firebase Console → Project settings → Service accounts → Generate new private key, and paste its contents into the `FIREBASE_SERVICE_ACCOUNT` secret.

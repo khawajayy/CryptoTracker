@@ -1,0 +1,14 @@
+{
+  "name": "cryptoledger",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Personal crypto + stocks trade ledger and portfolio tracker (single-file app, no build step for the app itself).",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "http-server": "^14.1.1"
+  }
+}
