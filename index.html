@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>CryptoLedger — Portfolio & Trade Tracker</title>
+<script src="goal-calc.js"></script>
 <style>
   :root{
     /* trading terminal — light variant */
@@ -93,6 +94,18 @@
   .miniproj td{padding:6px 8px;text-align:right;font-size:13px;border-bottom:1px dotted var(--border)}
   .miniproj tr:last-child td{border-bottom:none}
   .miniproj td:first-child{text-align:left;color:var(--muted)}
+  /* step-up goal */
+  .step-card{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:10px}
+  .step-flow{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+  .step-node{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:13px}
+  .step-node .st-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:4px}
+  .step-node .st-prog{font-family:var(--mono);font-size:13.5px}
+  .step-node .st-sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .step-arrow{text-align:center;color:var(--muted);font-size:14px;line-height:1}
+  .step-divider{background:var(--panel2);font-weight:700;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .step-divider td{padding:6px 10px;text-align:left}
+  .tag.stepup{color:#0891b2;border-color:#a5f3fc;background:#ecfeff}
+  :root[data-theme="dark"] .tag.stepup{color:#67e8f9;border-color:#164e63;background:rgba(8,145,178,.12)}
   .grid{display:grid;gap:14px}
   .cards{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
@@ -400,6 +413,7 @@ const arrow = (n) => n>0 ? '<span class="delta">▲</span>' : (n<0 ? '<span clas
 /* ---------- state ---------- */
 let state = load();
 let goalEditing = null;   // null | "new" | goalId — controls the goal add/edit form
+let goalEditState = null; // transient state while configuring a goal in add/edit form
 let lastEquityChart = null;   // scale params for the equity-chart hover
 let _lastSyncSig = null;  // signature of last-seen synced data (set after load, below)
 
@@ -431,6 +445,21 @@ function normalizeState(s, keepUi){
     merged.goals = [{ id: s.goal.id||uid(), name:"Goal", target:s.goal.target, profitPct:s.goal.profitPct||10 }];
   }
   delete merged.goal;
+  merged.goals = merged.goals.map(g => {
+    if(!g || typeof g !== "object") return g;
+    const isStepUp = g.type === "stepup";
+    return {
+      id: g.id || uid(),
+      name: g.name || (isStepUp ? "Step-Up Goal" : "Goal"),
+      type: isStepUp ? "stepup" : "fixed",
+      target: Number(g.target) || 0,
+      profitPct: Number(g.profitPct) || 10,
+      startAmount: g.startAmount != null ? Number(g.startAmount) : null,
+      steps: Array.isArray(g.steps) && g.steps.length
+        ? g.steps.map(st => ({ target: Number(st.target), profitPct: Number(st.profitPct) }))
+        : (isStepUp ? [{ target: Number(g.target) || 10000, profitPct: Number(g.profitPct) || 10 }] : [])
+    };
+  });
   merged.favorites = Array.isArray(s.favorites) ? s.favorites : [];
   merged.equityHistory = Array.isArray(s.equityHistory) ? s.equityHistory : [];
   merged.dataUpdatedAt = s.dataUpdatedAt || 0;
@@ -680,6 +709,7 @@ function render(){
 
 // number of compounding X%-profit trades to grow `from` up to `to`
 function tradesToGoal(from, to, pct){
+  if(window.GoalCalc && window.GoalCalc.tradesToGoal) return window.GoalCalc.tradesToGoal(from, to, pct);
   if(!(from>0) || !(to>from) || !(pct>0)) return null;
   return Math.ceil(Math.log(to/from) / Math.log(1 + pct/100));
 }
@@ -696,7 +726,133 @@ function ringSVG(progress, reached, size, stroke){
       stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg>`;
 }
 
+function stepUpGoalCardHTML(g, equity){
+  const steps = Array.isArray(g.steps) && g.steps.length ? g.steps : [{ target: g.target || 15000, profitPct: g.profitPct || 10 }];
+  const startAmount = g.startAmount > 0 ? g.startAmount : (equity > 0 ? equity : 10000);
+  const calcFn = (window.GoalCalc && window.GoalCalc.calculateStepUpGoal) || calculateStepUpGoal;
+  const calc = calcFn({ startAmount, steps });
+
+  const overallTarget = calc.goalAmount || g.target || steps[steps.length - 1].target;
+  const remaining = overallTarget - equity;
+  const progress = Math.max(0, Math.min(100, (equity / overallTarget) * 100));
+  const reached = equity >= overallTarget - 1e-9;
+  const gainNeededPct = equity > 0 ? (overallTarget / equity - 1) * 100 : null;
+
+  return `<div class="card">
+    <div class="flex" style="justify-content:space-between;gap:8px;align-items:flex-start">
+      <div>
+        <b style="font-size:16px">${esc(g.name || "Step-Up Goal")}</b>
+        <div style="margin-top:4px"><span class="tag stepup">Step-Up · ${steps.length} ${steps.length === 1 ? 'step' : 'steps'}</span></div>
+      </div>
+      <span style="white-space:nowrap">
+        <button class="iconbtn" data-goaledit="${g.id}" title="Edit">✎</button>
+        <button class="iconbtn" data-goaldel="${g.id}" title="Delete">🗑</button>
+      </span>
+    </div>
+
+    <div class="ringcard" style="padding:14px 0 4px">
+      <div class="ring sm">${ringSVG(progress, reached, 160, 13)}
+        <div class="center">
+          <div class="pctbig ${reached ? 'pos' : ''}">${progress.toFixed(0)}%</div>
+          <div class="pctsub">of ${fmtUSD(overallTarget)}</div>
+        </div>
+      </div>
+    </div>
+
+    ${reached ? `<div class="reached">🎉 Reached!</div>` : ``}
+
+    <div class="goalstat"><span class="k">Current equity</span><span class="v">${fmtUSD(equity)}</span></div>
+    <div class="goalstat"><span class="k">${reached ? 'Surplus over goal' : 'Remaining'}</span>
+      <span class="v ${reached ? 'pos' : ''}">${fmtUSD(Math.abs(remaining))}${fmtSec(Math.abs(remaining)) ? `<small>${fmtSec(Math.abs(remaining))}</small>` : ''}</span>
+    </div>
+    ${!reached && gainNeededPct != null ? `<div class="goalstat"><span class="k">Gain still needed</span><span class="v">${gainNeededPct.toFixed(1)}%</span></div>` : ``}
+
+    <div class="goalstat"><span class="k">Starting balance</span><span class="v">${fmtUSD(calc.initialStartingBalance)}</span></div>
+    <div class="goalstat"><span class="k">Total winning trades required</span><span class="v bignum" style="font-size:20px">${calc.totalTrades}</span></div>
+    <div class="goalstat"><span class="k">Final ending balance</span>
+      <span class="v pos">${fmtUSD(calc.finalBalance)}${fmtSec(calc.finalBalance) ? `<small>${fmtSec(calc.finalBalance)}</small>` : ''}</span>
+    </div>
+    <div class="goalstat"><span class="k">Total expected profit</span><span class="v pos">+${fmtUSD(calc.totalProfit)}</span></div>
+    ${calc.overshootAmount > 0 ? `<div class="goalstat"><span class="k">Surplus after final trade</span><span class="v pos">+${fmtUSD(calc.overshootAmount)}</span></div>` : ``}
+
+    <!-- Step Progression Roadmap -->
+    <div class="step-flow">
+      <div style="font-weight:700;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Step Progression Roadmap</div>
+      ${calc.steps.map((st, idx) => `
+        ${idx > 0 ? `<div class="step-arrow">↓</div>` : ''}
+        <div class="step-node">
+          <div class="st-head">
+            <span><b>Step ${st.stepNumber}</b></span>
+            <span class="tag">${st.profitPct}% / trade</span>
+          </div>
+          <div class="st-prog">${fmtUSD(st.startingBalance)} → <b>${fmtUSD(st.endingBalance)}</b></div>
+          <div class="st-sub">${st.tradesCount} ${st.tradesCount === 1 ? 'trade' : 'trades'} · Target: ${fmtUSD(st.targetAmount)} · Profit: +${fmtUSD(st.profitGenerated)}</div>
+        </div>
+      `).join('')}
+      <div class="step-arrow">↓</div>
+      <div class="step-node" style="border-color:var(--accent);background:var(--panel)">
+        <div class="st-head">
+          <span style="color:var(--accent);font-weight:700">🎯 Goal Complete</span>
+          <span class="pos font-bold">${fmtUSD(calc.finalBalance)}</span>
+        </div>
+        <div class="st-sub">${calc.totalTrades} total trades · Total profit: +${fmtUSD(calc.totalProfit)}</div>
+      </div>
+    </div>
+
+    <!-- Trade Progression Table -->
+    <div style="margin-top:14px">
+      <button class="btn sm" data-toggletable="${g.id}" style="width:100%;justify-content:center">
+        📊 View Trade-by-Trade Breakdown (${calc.totalTrades} trades)
+      </button>
+      <div id="tt-${g.id}" style="display:none;margin-top:10px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+        <table>
+          <thead>
+            <tr>
+              <th>Trade</th>
+              <th>Step</th>
+              <th>Profit %</th>
+              <th>Start Balance</th>
+              <th>Profit</th>
+              <th>End Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${calc.trades.map(t => {
+              if (t.trade === 0) {
+                return `<tr data-tradenum="0">
+                  <td><b>#0</b></td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td><b>${fmtUSD(t.endingBalance)}</b></td>
+                </tr>`;
+              }
+              const isStepStart = t.isStepStart && t.step > 1;
+              const stepObj = calc.steps.find(s => s.stepNumber === t.step);
+              return `
+                ${isStepStart ? `<tr class="step-divider"><td colspan="6">▶ Step ${t.step} begins (Starts at ${fmtUSD(t.startingBalance)} · Target ${fmtUSD(stepObj ? stepObj.targetAmount : 0)})</td></tr>` : ''}
+                <tr data-tradenum="${t.trade}" ${t.isStepStart ? 'style="background:var(--hover)"' : ''}>
+                  <td><b>#${t.trade}</b></td>
+                  <td><span class="tag">Step ${t.step}</span></td>
+                  <td>${t.profitPct}%</td>
+                  <td>${fmtUSD(t.startingBalance)}</td>
+                  <td class="pos">+${fmtUSD(t.profit)}</td>
+                  <td><b>${fmtUSD(t.endingBalance)}</b></td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
 function goalCardHTML(g, equity){
+  if(g.type === "stepup"){
+    return stepUpGoalCardHTML(g, equity);
+  }
   const target=g.target, pct=g.profitPct||10;
   const remaining=target-equity;
   const progress=Math.max(0, Math.min(100, equity/target*100));
@@ -735,6 +891,29 @@ function goalCardHTML(g, equity){
   </div>`;
 }
 
+function syncGoalEditForm(){
+  if(!goalEditState) return;
+  const nameEl = document.getElementById("gfName");
+  if(nameEl) goalEditState.name = nameEl.value;
+  const targetEl = document.getElementById("gfTarget");
+  if(targetEl) goalEditState.target = stripNum(targetEl.value);
+  const pctEl = document.getElementById("gfPct");
+  if(pctEl) goalEditState.profitPct = parseFloat(pctEl.value) || 10;
+  const startEl = document.getElementById("gfStartAmount");
+  if(startEl) goalEditState.startAmount = stripNum(startEl.value);
+
+  const stepRows = document.querySelectorAll(".step-card");
+  stepRows.forEach(row => {
+    const idx = parseInt(row.dataset.stepidx, 10);
+    if(goalEditState.steps && goalEditState.steps[idx]){
+      const tInp = row.querySelector(".step-target");
+      const pInp = row.querySelector(".step-pct");
+      if(tInp) goalEditState.steps[idx].target = stripNum(tInp.value);
+      if(pInp) goalEditState.steps[idx].profitPct = parseFloat(pInp.value) || 10;
+    }
+  });
+}
+
 function renderGoal(){
   const p = computePortfolio();
   const equity = p.equity;
@@ -745,16 +924,112 @@ function renderGoal(){
     <button class="btn primary" id="goalAdd">＋ Add goal</button></div>`;
 
   if(goalEditing){
-    const g = goalEditing==="new" ? {name:"",target:"",profitPct:10}
-            : (goals.find(x=>x.id===goalEditing) || {name:"",target:"",profitPct:10});
-    html += `<div class="panel" style="max-width:520px;margin:0 auto 18px">
-      <h2>${goalEditing==="new"?"New goal":"Edit goal"}</h2>
+    if(!goalEditState || goalEditState.id !== goalEditing){
+      const defStart = equity > 0 ? equity : 10000;
+      if(goalEditing === "new"){
+        goalEditState = {
+          id: "new",
+          type: "fixed",
+          name: "",
+          target: "",
+          profitPct: 10,
+          startAmount: defStart,
+          steps: [
+            { target: Math.round(defStart * 1.5), profitPct: 20 },
+            { target: Math.round(defStart * 10), profitPct: 10 }
+          ]
+        };
+      } else {
+        const existing = goals.find(x => x.id === goalEditing);
+        const isStepUp = existing && existing.type === "stepup";
+        const startAmt = existing && existing.startAmount > 0 ? existing.startAmount : defStart;
+        goalEditState = {
+          id: goalEditing,
+          type: isStepUp ? "stepup" : "fixed",
+          name: existing ? (existing.name || "") : "",
+          target: existing ? (existing.target || "") : "",
+          profitPct: existing ? (existing.profitPct || 10) : 10,
+          startAmount: startAmt,
+          steps: existing && Array.isArray(existing.steps) && existing.steps.length
+            ? JSON.parse(JSON.stringify(existing.steps))
+            : [
+                { target: existing && existing.target ? existing.target : Math.round(defStart * 1.5), profitPct: 20 },
+                { target: (existing && existing.target ? existing.target : Math.round(defStart * 1.5)) * 2, profitPct: 10 }
+              ]
+        };
+      }
+    }
+
+    const isStepUp = goalEditState.type === "stepup";
+    html += `<div class="panel" style="max-width:540px;margin:0 auto 18px">
+      <h2>${goalEditing === "new" ? "New goal" : "Edit goal"}</h2>
       <div style="padding:18px">
-        <div class="field"><label>Name</label><input id="gfName" value="${(g.name||"").replace(/"/g,'&quot;')}" placeholder="e.g. Car fund, 100k milestone"></div>
-        <div class="field"><label>Target value (USD)</label><input id="gfTarget" type="text" inputmode="decimal" class="amt" value="${g.target?fmtAmtStr(g.target):""}" placeholder="e.g. 10,000" autocomplete="off"></div>
-        <div class="field"><label>Expected profit per winning trade (%)</label><input id="gfPct" type="number" step="any" min="0" value="${g.profitPct||10}"></div>
-        <div class="flex" style="gap:10px"><button class="btn primary" id="gfSave">Save goal</button><button class="btn" id="gfCancel">Cancel</button></div>
-      </div></div>`;
+        <div class="field">
+          <label>Goal Mode</label>
+          <div class="seg" id="gfTypeSeg">
+            <button type="button" data-gtype="fixed" class="${!isStepUp ? 'active' : ''}">Fixed Profit Goal</button>
+            <button type="button" data-gtype="stepup" class="${isStepUp ? 'active' : ''}">Step-Up Goal</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Name</label>
+          <input id="gfName" value="${esc(goalEditState.name)}" placeholder="e.g. Milestone 1, Portfolio Growth">
+        </div>
+
+        ${!isStepUp ? `
+          <div class="field">
+            <label>Target value (USD)</label>
+            <input id="gfTarget" type="text" inputmode="decimal" class="amt" value="${goalEditState.target ? fmtAmtStr(goalEditState.target) : ""}" placeholder="e.g. 10,000" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Expected profit per winning trade (%)</label>
+            <input id="gfPct" type="number" step="any" min="0.01" value="${goalEditState.profitPct || 10}">
+          </div>
+        ` : `
+          <div class="field">
+            <label>Starting balance (USD)</label>
+            <div class="flex" style="gap:8px">
+              <input id="gfStartAmount" type="text" inputmode="decimal" class="amt" value="${goalEditState.startAmount ? fmtAmtStr(goalEditState.startAmount) : ""}" placeholder="e.g. 10,000" autocomplete="off" style="flex:1">
+              <button type="button" class="btn sm" id="gfUseEquity" title="Set starting balance to current equity">Use equity (${fmtUSD(equity)})</button>
+            </div>
+          </div>
+
+          <div class="hint" style="margin-bottom:14px;padding:8px 12px;background:var(--panel2);border-radius:var(--radius);border:1px solid var(--border)">
+            💡 <b>Step-Up Goal:</b> Each step begins from the previous step's <i>actual ending balance</i>. Profit % compounds per trade until that step's target is reached or exceeded. Targets must increase sequentially.
+          </div>
+
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px">Configured Steps (${goalEditState.steps.length})</div>
+          <div id="gfStepList">
+            ${goalEditState.steps.map((st, idx) => `
+              <div class="step-card" data-stepidx="${idx}">
+                <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+                  <b>Step ${idx + 1} ${idx === goalEditState.steps.length - 1 ? '<span class="tag" style="margin-left:6px">Overall Goal</span>' : ''}</b>
+                  ${goalEditState.steps.length > 1 ? `<button type="button" class="iconbtn" data-delstep="${idx}" title="Remove Step ${idx + 1}" style="color:var(--red)">✕ Remove</button>` : ''}
+                </div>
+                <div class="row2">
+                  <div class="field" style="margin-bottom:0">
+                    <label>Target amount (USD)</label>
+                    <input type="text" inputmode="decimal" class="amt step-target" data-stepidx="${idx}" value="${st.target ? fmtAmtStr(st.target) : ""}" placeholder="e.g. 15,000" autocomplete="off">
+                  </div>
+                  <div class="field" style="margin-bottom:0">
+                    <label>Profit per trade (%)</label>
+                    <input type="number" step="any" min="0.01" class="step-pct" data-stepidx="${idx}" value="${st.profitPct || 10}" placeholder="e.g. 20">
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <button type="button" class="btn sm" id="gfAddStep" style="margin-bottom:14px">＋ Add Step</button>
+        `}
+
+        <div class="flex" style="gap:10px;margin-top:14px">
+          <button class="btn primary" id="gfSave">Save goal</button>
+          <button class="btn" id="gfCancel">Cancel</button>
+        </div>
+      </div>
+    </div>`;
   }
 
   if(!goals.length && !goalEditing){
@@ -766,31 +1041,183 @@ function renderGoal(){
 
   viewEl.innerHTML = html;
 
-  document.getElementById("goalAdd").onclick=()=>{ goalEditing="new"; renderGoal(); };
-  const cancel=document.getElementById("gfCancel"); if(cancel) cancel.onclick=()=>{ goalEditing=null; renderGoal(); };
-  const gfSave=document.getElementById("gfSave");
-  if(gfSave) gfSave.onclick=()=>{
-    const name=document.getElementById("gfName").value.trim();
-    const target=stripNum(document.getElementById("gfTarget").value);
-    const pct=parseFloat(document.getElementById("gfPct").value)||10;
-    if(!(target>0)){ toast("Enter a positive target amount", true); return; }
-    if(goalEditing==="new"){
-      state.goals.push({ id:uid(), name:name||"Goal", target, profitPct:pct });
-    } else {
-      const g=state.goals.find(x=>x.id===goalEditing);
-      if(g){ g.name=name||"Goal"; g.target=target; g.profitPct=pct; }
-    }
-    goalEditing=null; save(); render(); toast("Goal saved");
+  document.getElementById("goalAdd").onclick=()=>{
+    goalEditing="new";
+    goalEditState=null;
+    renderGoal();
   };
-  viewEl.querySelectorAll("[data-goaledit]").forEach(b=>b.onclick=()=>{ goalEditing=b.dataset.goaledit; renderGoal(); });
-  viewEl.querySelectorAll("[data-goaldel]").forEach(b=>b.onclick=()=>{
-    const g=state.goals.find(x=>x.id===b.dataset.goaldel);
-    if(confirm(`Delete goal "${g?g.name:''}"?`)){ state.goals=state.goals.filter(x=>x.id!==b.dataset.goaldel); save(); render(); toast("Goal deleted"); }
+
+  const cancel=document.getElementById("gfCancel");
+  if(cancel){
+    cancel.onclick=()=>{
+      goalEditing=null;
+      goalEditState=null;
+      renderGoal();
+    };
+  }
+
+  const typeSeg = document.getElementById("gfTypeSeg");
+  if(typeSeg){
+    typeSeg.onclick = (e) => {
+      const b = e.target.closest("button");
+      if(!b) return;
+      syncGoalEditForm();
+      goalEditState.type = b.dataset.gtype;
+      renderGoal();
+    };
+  }
+
+  const useEqBtn = document.getElementById("gfUseEquity");
+  if(useEqBtn){
+    useEqBtn.onclick = () => {
+      const startInp = document.getElementById("gfStartAmount");
+      if(startInp){
+        startInp.value = fmtAmtStr(equity > 0 ? equity : 10000);
+        formatAmt(startInp);
+      }
+    };
+  }
+
+  const addStepBtn = document.getElementById("gfAddStep");
+  if(addStepBtn){
+    addStepBtn.onclick = () => {
+      syncGoalEditForm();
+      const lastStep = goalEditState.steps[goalEditState.steps.length - 1];
+      const lastTarget = lastStep ? Number(lastStep.target) || 10000 : 10000;
+      const lastPct = lastStep ? Number(lastStep.profitPct) || 10 : 10;
+      const nextTarget = Math.round(lastTarget * 1.5);
+      const nextPct = lastPct > 5 ? Math.max(1, lastPct - 5) : lastPct;
+      goalEditState.steps.push({ target: nextTarget, profitPct: nextPct });
+      renderGoal();
+    };
+  }
+
+  viewEl.querySelectorAll("[data-delstep]").forEach(btn => {
+    btn.onclick = () => {
+      syncGoalEditForm();
+      const idx = parseInt(btn.dataset.delstep, 10);
+      if(goalEditState.steps.length > 1){
+        goalEditState.steps.splice(idx, 1);
+        renderGoal();
+      }
+    };
   });
+
+  viewEl.querySelectorAll(".amt").forEach(inp => {
+    inp.addEventListener("input", () => formatAmt(inp));
+  });
+
+  const gfSave=document.getElementById("gfSave");
+  if(gfSave){
+    gfSave.onclick=()=>{
+      syncGoalEditForm();
+      const name = (goalEditState.name || "").trim();
+      const isStepUp = goalEditState.type === "stepup";
+
+      if(!isStepUp){
+        const target = Number(goalEditState.target);
+        const pct = Number(goalEditState.profitPct);
+        if(!(target > 0)){ toast("Enter a positive target amount", true); return; }
+        if(!(pct > 0)){ toast("Enter a positive profit percentage", true); return; }
+
+        if(goalEditing === "new"){
+          state.goals.push({ id: uid(), name: name || "Goal", type: "fixed", target, profitPct: pct });
+        } else {
+          const g = state.goals.find(x => x.id === goalEditing);
+          if(g){ g.name = name || "Goal"; g.type = "fixed"; g.target = target; g.profitPct = pct; }
+        }
+      } else {
+        const startAmount = Number(goalEditState.startAmount);
+        const steps = (goalEditState.steps || []).map(s => ({
+          target: Number(s.target),
+          profitPct: Number(s.profitPct)
+        }));
+
+        const valFn = (window.GoalCalc && window.GoalCalc.validateStepUpGoal) || validateStepUpGoal;
+        const validation = valFn({ startAmount, steps });
+        if(!validation.valid){
+          toast(validation.error, true);
+          return;
+        }
+
+        const finalTarget = steps[steps.length - 1].target;
+        const firstPct = steps[0].profitPct;
+
+        if(goalEditing === "new"){
+          state.goals.push({
+            id: uid(),
+            name: name || "Step-Up Goal",
+            type: "stepup",
+            startAmount,
+            target: finalTarget,
+            profitPct: firstPct,
+            steps
+          });
+        } else {
+          const g = state.goals.find(x => x.id === goalEditing);
+          if(g){
+            g.name = name || "Step-Up Goal";
+            g.type = "stepup";
+            g.startAmount = startAmount;
+            g.target = finalTarget;
+            g.profitPct = firstPct;
+            g.steps = steps;
+          }
+        }
+      }
+
+      goalEditing = null;
+      goalEditState = null;
+      save();
+      render();
+      toast("Goal saved");
+    };
+  }
+
+  viewEl.querySelectorAll("[data-goaledit]").forEach(b=>b.onclick=()=>{
+    goalEditing = b.dataset.goaledit;
+    goalEditState = null;
+    renderGoal();
+  });
+
+  viewEl.querySelectorAll("[data-goaldel]").forEach(b=>b.onclick=()=>{
+    const g = state.goals.find(x => x.id === b.dataset.goaldel);
+    if(confirm(`Delete goal "${g ? g.name : ''}"?`)){
+      state.goals = state.goals.filter(x => x.id !== b.dataset.goaldel);
+      save();
+      render();
+      toast("Goal deleted");
+    }
+  });
+
   viewEl.querySelectorAll("[data-goalpct]").forEach(inp=>inp.addEventListener("input",()=>{
-    const v=parseFloat(inp.value); if(v>0){ const g=state.goals.find(x=>x.id===inp.dataset.goalpct);
-      if(g){ g.profitPct=v; save(); renderGoal(); const again=viewEl.querySelector(`[data-goalpct="${g.id}"]`); if(again){ again.focus(); again.setSelectionRange(again.value.length,again.value.length);} } }
+    const v = parseFloat(inp.value);
+    if(v > 0){
+      const g = state.goals.find(x => x.id === inp.dataset.goalpct);
+      if(g){
+        g.profitPct = v;
+        save();
+        renderGoal();
+        const again = viewEl.querySelector(`[data-goalpct="${g.id}"]`);
+        if(again){
+          again.focus();
+          again.setSelectionRange(again.value.length, again.value.length);
+        }
+      }
+    }
   }));
+
+  viewEl.querySelectorAll("[data-toggletable]").forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.toggletable;
+      const tableEl = document.getElementById(`tt-${id}`);
+      if(tableEl){
+        const isHidden = tableEl.style.display === "none";
+        tableEl.style.display = isHidden ? "block" : "none";
+        b.textContent = isHidden ? "✕ Hide Trade Progression" : "📊 View Trade-by-Trade Breakdown";
+      }
+    };
+  });
 }
 
 function renderDashboard(){
