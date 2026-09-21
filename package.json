@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "description": "Personal crypto + stocks trade ledger and portfolio tracker (single-file app, no build step for the app itself).",
   "scripts": {
-    "test:e2e": "playwright test",
+    "test": "playwright test",
+    "test:unit": "playwright test tests/unit",
+    "test:e2e": "playwright test tests/e2e",
     "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
