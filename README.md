@@ -143,6 +143,8 @@ Below Open Positions, the dashboard shows an **equity curve plotted against your
 
 It's built from real numbers, never faked: earlier equity points are reconstructed from your ledger (cash + cost basis at each transaction date), and live equity **snapshots are recorded** each time prices refresh, so the curve fills in and reflects true market value as you keep using the app. **Hover** (or touch-drag) anywhere on the chart to read the equity value and date at that point, and the **X-axis shows dated ticks** across the range. Equity history is kept per device (not synced), so each device builds its own live curve.
 
+**Chart filters:** switch metric (Equity $ / Profit $ / Return %), filter to a single holding, and pick a timeframe (24H … ALL). In Equity mode you can **toggle the Net capital line** off via the legend checkbox — the Y axis rescales automatically to fit only what's shown. The **Y axis is labeled with amount thresholds** (round value gridlines), formatted to the current metric.
+
 ## Break-even vs net capital
 
 The Holdings table shows a **Break-even (net cap)** column: the price each holding must reach for your **total equity to equal your net capital**, with cash and every other position held constant.
