@@ -192,12 +192,25 @@
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--panel);box-shadow:var(--shadow)}
   input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--panel)}
   #pctSeg button{font-size:12.5px}
-  /* equity chart hover + axis */
-  .eqchart{position:relative;touch-action:none}
-  .eqcross{position:absolute;width:1px;background:var(--muted);opacity:.5;pointer-events:none;top:14px;height:140px}
-  .eqdot{position:absolute;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 0 2px var(--panel)}
-  .eqtip{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:12px;white-space:nowrap;pointer-events:none;box-shadow:var(--shadow);z-index:2;font-variant-numeric:tabular-nums}
-  .eqx{position:relative;height:15px;margin-top:2px;font-size:10.5px;color:var(--muted)}
+  /* equity chart controls + hover + axis */
+  .chart-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+  .chart-mode-seg{display:inline-flex;background:var(--chip);padding:2px;border-radius:var(--radius);border:1px solid var(--border)}
+  .chart-mode-seg button{background:none;border:none;color:var(--muted);font-weight:600;font-size:12px;padding:5px 11px;border-radius:4px;cursor:pointer;transition:all .15s var(--ease)}
+  .chart-mode-seg button:hover{color:var(--text)}
+  .chart-mode-seg button.active{background:var(--panel);color:var(--text);box-shadow:var(--shadow)}
+  .chart-asset-select{background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:var(--radius);font-size:12px;font-weight:600;outline:none;cursor:pointer}
+  .chart-asset-select:focus{outline:2px solid var(--accent)}
+  .chart-timeframe-bar{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+  .chart-tf-btn{background:var(--chip);border:1px solid var(--border);color:var(--muted);padding:4px 9px;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s var(--ease)}
+  .chart-tf-btn:hover{color:var(--text);border-color:var(--muted)}
+  .chart-tf-btn.active{background:var(--accent);border-color:var(--accent-dark);color:#fff}
+  .chart-stats-strip{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:7px 12px;background:var(--panel2);border-radius:var(--radius);font-size:12px;margin-bottom:12px;border:1px solid var(--border)}
+  .chart-stat-item{display:flex;align-items:center;gap:6px}
+  .eqchart{position:relative;touch-action:none;overflow:hidden;border-radius:var(--radius);background:var(--panel2);padding:10px 0 6px;border:1px solid var(--border)}
+  .eqcross{position:absolute;width:1px;background:var(--text);opacity:.35;pointer-events:none;z-index:2}
+  .eqdot{position:absolute;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 0 3px var(--panel), 0 0 8px rgba(0,0,0,0.3);z-index:3}
+  .eqtip{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;white-space:nowrap;pointer-events:none;box-shadow:var(--shadow-lg);z-index:10;font-variant-numeric:tabular-nums;line-height:1.45}
+  .eqx{position:relative;height:18px;margin-top:6px;font-size:11px;color:var(--muted)}
   .eqx span{position:absolute;transform:translateX(-50%);white-space:nowrap}
   /* keyboard focus (mouse users unaffected) */
   .btn:focus-visible,.tab:focus-visible,.modeseg button:focus-visible,.iconbtn:focus-visible,.seg button:focus-visible{
@@ -464,8 +477,9 @@ function defaultState(){
     goals: [],                                       // [{id,name,target,profitPct}]
     favorites: [],                                   // watchlist: [{id,type,symbol,name,coingeckoId,img}]
     equityHistory: [],                               // device-local equity snapshots [{t,v}]
+    priceHistory: {},                                // device-local historical market prices: assetId -> {points:[{t,p}], days, updatedAt}
     dataUpdatedAt: 0,                                 // ms of last synced-data change (for newest-wins)
-    ui: { view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null} }
+    ui: { view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}, chartMode:"equity", chartAsset:"all" }
   };
 }
 function normalizeState(s, keepUi){
@@ -473,9 +487,11 @@ function normalizeState(s, keepUi){
   const merged = Object.assign(d, s, {
     settings: Object.assign(d.settings, s.settings||{}),
     fx: Object.assign(d.fx, s.fx||{}),
-    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}}, s.ui||{})
+    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}, chartMode:"equity", chartAsset:"all"}, s.ui||{})
   });
   if(!merged.ui.range) merged.ui.range={preset:"all", start:null, end:null};
+  if(!merged.ui.chartMode) merged.ui.chartMode="equity";
+  if(!merged.ui.chartAsset) merged.ui.chartAsset="all";
   merged.goals = Array.isArray(s.goals) ? s.goals : [];
   // migrate the old single-goal shape ({target,profitPct}) into the list
   if(merged.goals.length===0 && s.goal && s.goal.target>0){
@@ -499,6 +515,7 @@ function normalizeState(s, keepUi){
   });
   merged.favorites = Array.isArray(s.favorites) ? s.favorites : [];
   merged.equityHistory = Array.isArray(s.equityHistory) ? s.equityHistory : [];
+  merged.priceHistory = (s.priceHistory && typeof s.priceHistory==="object") ? s.priceHistory : {};
   merged.dataUpdatedAt = s.dataUpdatedAt || 0;
   return merged;
 }
@@ -555,6 +572,7 @@ function applyCloudState(remote){
 }
 function bumpDataUpdatedAt(){ state.dataUpdatedAt=Date.now(); _lastSyncSig=syncSignature(); persistLocal(); }
 window.getCloudPayload=getCloudPayload; window.getLocalTxnCount=getLocalTxnCount; window.applyCloudState=applyCloudState; window.getLocalUpdatedAt=getLocalUpdatedAt; window.bumpDataUpdatedAt=bumpDataUpdatedAt;
+window.state=state; window.getState=()=>state; window.render=render; window.save=save; window.persistLocal=persistLocal;
 // Header chip + the Settings cloud panel, refreshed whenever cloud state changes.
 function setCloudStatus(text){
   const c = window.Cloud||{}; if(text!=null) c.status=text;
@@ -1315,17 +1333,17 @@ function renderDashboard(){
       ${p.holdings.length? holdingsTable(p, true) : emptyBlock("📈","No open positions","Add a Buy transaction to start tracking a holding.")}
     </div>
 
-    <div class="panel" style="margin-top:18px">
-      <h2>Equity over time <span class="spacer"></span><span class="muted price-fresh">${R.label}</span></h2>
-      ${equityChartHTML(p.equity)}
+    <div class="panel" style="margin-top:18px" id="equityChartPanel">
+      ${equityChartHTML(p.equity, p.holdings)}
     </div>
   `;
   document.getElementById("freshHint").textContent = freshnessText(p.holdings);
   wireRangeBar();
   wireEquityHover();
+  fetchMarketHistoryForAllHeld();
 }
 
-/* ---------- equity history + chart ---------- */
+/* ---------- equity history + market charts ---------- */
 // Record a real market-equity snapshot (device-local, throttled).
 function recordEquityPoint(){
   const eq = computePortfolio().equity;
@@ -1338,88 +1356,308 @@ function recordEquityPoint(){
   if(h.length>1000) h.splice(0, h.length-1000);
   persistLocal();
 }
-// Build the series: book value (cash + cost basis) reconstructed at each ledger
-// event, plus recorded live snapshots, plus the current live equity. All real.
-function equitySeries(currentEquity){
-  const txns=[...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
-  let cash=0; const pos={}; const pts=[];
-  const costTotal=()=>Object.values(pos).reduce((s,p)=> s + Math.max(0,p.costBasis), 0);
-  for(const t of txns){
-    if(t.type==="DEPOSIT") cash+=t.amount;
-    else if(t.type==="WITHDRAW") cash-=t.amount;
-    else if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); cash-=g; const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; }
-    else if(t.type==="SELL"){ const g=t.qty*t.price-(t.fee||0); cash+=g; const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=t.qty; p.costBasis-=avg*t.qty; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
-    else if(t.type==="ADJUST"){ if(t.target==="cash") cash+=t.delta; else { const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} } }
-    pts.push({ t:new Date(t.date).getTime(), v:+(cash+costTotal()).toFixed(2), kind:"book" });
+
+// Fetch and cache CoinGecko market chart prices for crypto assets.
+let _marketFetchLock = false;
+async function fetchAssetPriceHistory(assetId, days = 30){
+  const asset = state.assets[assetId];
+  if(!asset || asset.type !== "crypto" || !asset.coingeckoId) return null;
+  const now = Date.now();
+  const cache = (state.priceHistory && state.priceHistory[assetId]) || null;
+  if(cache && cache.days >= days && cache.updatedAt && (now - cache.updatedAt < 60*60*1000)){
+    return cache.points;
   }
-  for(const s of (state.equityHistory||[])) pts.push({ t:s.t, v:s.v, kind:"live" });
-  pts.push({ t:Date.now(), v:+(currentEquity!=null?currentEquity:computePortfolio().equity).toFixed(2), kind:"live" });
-  pts.sort((a,b)=>a.t-b.t);
-  // collapse points sharing the same timestamp (keep the last)
-  const out=[]; for(const p of pts){ if(out.length && out[out.length-1].t===p.t) out[out.length-1]=p; else out.push(p); }
-  return out;
+  try{
+    const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(asset.coingeckoId)}/market_chart?vs_currency=usd&days=${days}`;
+    const r = await fetch(url);
+    const j = await r.json();
+    if(j && Array.isArray(j.prices) && j.prices.length > 0){
+      state.priceHistory = state.priceHistory || {};
+      state.priceHistory[assetId] = {
+        points: j.prices.map(([t, p]) => ({ t, p: +p.toFixed(4) })),
+        days,
+        updatedAt: now
+      };
+      persistLocal();
+      if(state.ui.view === "dashboard"){
+        renderDashboard();
+      }
+      return state.priceHistory[assetId].points;
+    }
+  }catch(e){}
+  return cache ? cache.points : null;
 }
-// Equity value at time t from the series (step: last point <= t). Before inception -> 0.
-function equityAt(t){
-  const s=equitySeries();
-  if(!s.length) return {v:0, kind:"book"};
-  if(t < s[0].t) return {v:0, kind:"book"};
-  let best=s[0]; for(const p of s){ if(p.t<=t) best=p; else break; }
-  return {v:best.v, kind:best.kind};
+
+function fetchMarketHistoryForAllHeld(){
+  if(_marketFetchLock) return;
+  _marketFetchLock = true;
+  setTimeout(() => { _marketFetchLock = false; }, 4000);
+  const pos = computePortfolio().positions;
+  const preset = (state.ui.range && state.ui.range.preset) || "all";
+  const daysMap = { "24h": 1, "7d": 7, "30d": 30, "90d": 90, "1y": 365, "ytd": 365, "all": 365 };
+  const days = daysMap[preset] || 30;
+  for(const [id, p] of Object.entries(pos)){
+    if(p.qty > 1e-9 && state.assets[id] && state.assets[id].type === "crypto"){
+      fetchAssetPriceHistory(id, days);
+    }
+  }
 }
-// Resolve the active date range to concrete timestamps + a label.
+
+// Get estimated price of an asset at timestamp t
+function getAssetPriceAt(assetId, t, fallbackPrice, fallbackTime){
+  const hist = state.priceHistory && state.priceHistory[assetId] && state.priceHistory[assetId].points;
+  if(hist && hist.length > 0){
+    if(t <= hist[0].t) return hist[0].p;
+    if(t >= hist[hist.length-1].t) return hist[hist.length-1].p;
+    for(let i=0; i<hist.length-1; i++){
+      if(t >= hist[i].t && t <= hist[i+1].t){
+        const span = hist[i+1].t - hist[i].t;
+        const f = span > 0 ? (t - hist[i].t) / span : 0;
+        return hist[i].p + f * (hist[i+1].p - hist[i].p);
+      }
+    }
+  }
+  const curPr = state.prices[assetId] ? state.prices[assetId].price : null;
+  if(curPr != null){
+    const now = Date.now();
+    const stTime = fallbackTime || t;
+    const baseP = fallbackPrice != null ? fallbackPrice : curPr;
+    if(t >= now || stTime >= now) return curPr;
+    if(t <= stTime) return baseP;
+    const f = (t - stTime) / (now - stTime);
+    return baseP + f * (curPr - baseP);
+  }
+  return fallbackPrice || 0;
+}
+
+// Replays ledger and prices up to timestamp t
+function computePortfolioAt(t, filter = "all"){
+  const txns = [...state.transactions].filter(x => new Date(x.date).getTime() <= t)
+    .sort((a,b)=>{
+      const d = new Date(a.date) - new Date(b.date);
+      return d !== 0 ? d : (a._seq||0) - (b._seq||0);
+    });
+  let cash = 0, deposits = 0, withdrawals = 0;
+  const pos = {};
+  for(const tx of txns){
+    if(tx.type==="DEPOSIT"){ cash += tx.amount; deposits += tx.amount; }
+    else if(tx.type==="WITHDRAW"){ cash -= tx.amount; withdrawals += tx.amount; }
+    else if(tx.type==="BUY"){
+      const gross = tx.qty*tx.price, fee = tx.fee||0;
+      cash -= (gross + fee);
+      const p = pos[tx.assetId] || (pos[tx.assetId]={qty:0,costBasis:0,lastPrice:tx.price,lastTime:new Date(tx.date).getTime()});
+      p.qty += tx.qty; p.costBasis += (gross + fee); p.lastPrice = tx.price; p.lastTime = new Date(tx.date).getTime();
+    }
+    else if(tx.type==="SELL"){
+      const gross = tx.qty*tx.price, fee = tx.fee||0;
+      cash += (gross - fee);
+      const p = pos[tx.assetId] || (pos[tx.assetId]={qty:0,costBasis:0});
+      const avg = p.qty>0 ? p.costBasis/p.qty : 0;
+      const basisSold = avg*tx.qty;
+      p.qty -= tx.qty; p.costBasis -= basisSold;
+      if(p.qty < 1e-9){ p.qty=0; p.costBasis=0; }
+    }
+    else if(tx.type==="ADJUST"){
+      if(tx.target==="cash"){ cash += tx.delta; }
+      else {
+        const p = pos[tx.assetId] || (pos[tx.assetId]={qty:0,costBasis:0});
+        if(tx.qtyDelta >= 0){ p.qty += tx.qtyDelta; }
+        else {
+          const rq = Math.min(-tx.qtyDelta, p.qty);
+          const avg = p.qty>0 ? p.costBasis/p.qty : 0;
+          p.qty -= rq; p.costBasis -= avg*rq;
+        }
+        if(p.qty < 1e-9){ p.qty=0; p.costBasis=0; }
+      }
+    }
+  }
+
+  let holdingsValue = 0, filteredCost = 0;
+  for(const [assetId, p] of Object.entries(pos)){
+    if(p.qty <= 1e-9) continue;
+    if(filter !== "all" && assetId !== filter) continue;
+    const price = getAssetPriceAt(assetId, t, p.lastPrice, p.lastTime);
+    holdingsValue += p.qty * price;
+    filteredCost += p.costBasis;
+  }
+
+  if(filter !== "all"){
+    const value = holdingsValue;
+    const netCapital = filteredCost;
+    const profit = value - netCapital;
+    const returnPct = netCapital > 0 ? (profit / netCapital * 100) : 0;
+    return { value, netCapital, profit, returnPct, cash: 0, holdingsValue };
+  }
+
+  const netCapital = deposits - withdrawals;
+  const value = cash + holdingsValue;
+  const profit = value - netCapital;
+  const returnPct = netCapital > 0 ? (profit / netCapital * 100) : 0;
+  return { value, netCapital, profit, returnPct, cash, holdingsValue };
+}
+
+function equityAt(t, filter = "all"){
+  const txns = state.transactions;
+  if(!txns.length) return { v:0, netCap:0, profit:0, retPct:0, kind:"book" };
+  const firstTxnTime = Math.min(...txns.map(x => new Date(x.date).getTime()));
+  if(t < firstTxnTime) return { v:0, netCap:0, profit:0, retPct:0, kind:"book" };
+  const p = computePortfolioAt(t, filter);
+  return { v:p.value, netCap:p.netCapital, profit:p.profit, retPct:p.returnPct, kind:"live" };
+}
+
+// Catmull-Rom to Cubic Bezier spline generator for ultra-smooth curves
+function smoothSvgPath(points){
+  if(!points || !points.length) return "";
+  if(points.length === 1) return `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  if(points.length === 2){
+    return `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)} L${points[1].x.toFixed(1)},${points[1].y.toFixed(1)}`;
+  }
+  let d = `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  for(let i=0; i<points.length-1; i++){
+    const p0 = i > 0 ? points[i-1] : points[i];
+    const p1 = points[i];
+    const p2 = points[i+1];
+    const p3 = i < points.length-2 ? points[i+2] : p2;
+    const cp1x = p1.x + (p2.x - p0.x)/6;
+    const cp1y = p1.y + (p2.y - p0.y)/6;
+    const cp2x = p2.x - (p3.x - p1.x)/6;
+    const cp2y = p2.y - (p3.y - p1.y)/6;
+    d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+// Build dense, accurately valuated series across time range
+function equitySeries(currentEquity, filter = "all", timeRange = null){
+  const R = timeRange || activeRange();
+  const txns = state.transactions;
+  if(!txns.length) return [];
+  const txnTimes = txns.map(t => new Date(t.date).getTime()).sort((a,b)=>a-b);
+  const inception = txnTimes[0];
+  const now = Date.now();
+
+  let startTs = R.startTs;
+  let endTs = Math.min(now, R.endTs);
+
+  if(R.isAll || startTs === -Infinity || startTs < inception){
+    startTs = inception;
+  }
+  if(endTs <= startTs){
+    endTs = startTs + 3600000;
+  }
+
+  const tsSet = new Set();
+  tsSet.add(startTs);
+  tsSet.add(endTs);
+
+  for(const t of txnTimes){
+    if(t >= startTs && t <= endTs) tsSet.add(t);
+  }
+
+  if(filter === "all"){
+    for(const s of (state.equityHistory || [])){
+      if(s.t >= startTs && s.t <= endTs) tsSet.add(s.t);
+    }
+  }
+
+  if(state.priceHistory){
+    const assetsToCheck = filter === "all" ? Object.keys(state.priceHistory) : [filter];
+    for(const aid of assetsToCheck){
+      const hist = state.priceHistory[aid] && state.priceHistory[aid].points;
+      if(hist){
+        for(const pt of hist){
+          if(pt.t >= startTs && pt.t <= endTs) tsSet.add(pt.t);
+        }
+      }
+    }
+  }
+
+  const span = endTs - startTs;
+  const minSamples = 40;
+  if(span > 0){
+    const step = span / minSamples;
+    for(let i=1; i<minSamples; i++){
+      tsSet.add(Math.round(startTs + i * step));
+    }
+  }
+
+  const sortedTimestamps = [...tsSet].sort((a,b)=>a-b);
+  const pts = [];
+  for(const t of sortedTimestamps){
+    const p = computePortfolioAt(t, filter);
+    pts.push({
+      t,
+      v: +p.value.toFixed(2),
+      nc: +p.netCapital.toFixed(2),
+      profit: +p.profit.toFixed(2),
+      retPct: +p.returnPct.toFixed(2)
+    });
+  }
+
+  if(currentEquity != null && filter === "all" && pts.length > 0){
+    const lastP = pts[pts.length - 1];
+    const liveEq = +currentEquity.toFixed(2);
+    lastP.v = liveEq;
+    lastP.profit = +(liveEq - lastP.nc).toFixed(2);
+    lastP.retPct = lastP.nc > 0 ? +((lastP.profit / lastP.nc) * 100).toFixed(2) : 0;
+  }
+
+  return pts;
+}
+
 function activeRange(){
-  const r=(state.ui && state.ui.range) || {preset:"all"};
-  const now=Date.now(), D=86400000;
-  const startOfDay=ms=>{ const d=new Date(ms); d.setHours(0,0,0,0); return d.getTime(); };
-  const endOfDay=ms=>{ const d=new Date(ms); d.setHours(23,59,59,999); return d.getTime(); };
-  let startTs=-Infinity, endTs=now, label="All time";
+  const r = (state.ui && state.ui.range) || { preset:"all" };
+  const now = Date.now(), D = 86400000;
+  const startOfDay = ms => { const d=new Date(ms); d.setHours(0,0,0,0); return d.getTime(); };
+  const endOfDay = ms => { const d=new Date(ms); d.setHours(23,59,59,999); return d.getTime(); };
+  let startTs = -Infinity, endTs = now, label = "All time";
   switch(r.preset){
-    case "30d": startTs=now-30*D; label="Last 30 days"; break;
-    case "90d": startTs=now-90*D; label="Last 90 days"; break;
-    case "1y":  startTs=now-365*D; label="Last 12 months"; break;
-    case "ytd": startTs=new Date(new Date().getFullYear(),0,1).getTime(); label="Year to date"; break;
+    case "24h": startTs = now - D; label = "Last 24 hours"; break;
+    case "7d":  startTs = now - 7*D; label = "Last 7 days"; break;
+    case "30d": startTs = now - 30*D; label = "Last 30 days"; break;
+    case "90d": startTs = now - 90*D; label = "Last 90 days"; break;
+    case "1y":  startTs = now - 365*D; label = "Last 12 months"; break;
+    case "ytd": startTs = new Date(new Date().getFullYear(),0,1).getTime(); label = "Year to date"; break;
     case "custom":
       startTs = r.start ? startOfDay(new Date(r.start+"T00:00:00").getTime()) : -Infinity;
       endTs   = r.end   ? Math.min(now, endOfDay(new Date(r.end+"T00:00:00").getTime())) : now;
-      { const f=t=> (t===-Infinity?"start":new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'}));
+      { const f = t => (t===-Infinity?"start":new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'}));
         label = `${f(startTs)} – ${new Date(endTs).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'})}`; }
       break;
-    default: startTs=-Infinity; endTs=now; label="All time";
+    default: startTs = -Infinity; endTs = now; label = "All time";
   }
-  return { preset:r.preset||"all", startTs, endTs, label, isAll:(r.preset||"all")==="all" };
+  return { preset: r.preset||"all", startTs, endTs, label, isAll: (r.preset||"all")==="all" };
 }
-// Period-scoped figures for the active range (flows exact from the ledger,
-// equity boundaries from the honest series).
+
 function computeRange(){
-  const R=activeRange();
-  const txns=[...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
-  const pos={};
-  let depositsP=0, withdrawalsP=0, realizedP=0, feesP=0, buysP=0, sellsP=0;
+  const R = activeRange();
+  const txns = [...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
+  const pos = {};
+  let depositsP = 0, withdrawalsP = 0, realizedP = 0, feesP = 0, buysP = 0, sellsP = 0;
   for(const t of txns){
-    const ts=new Date(t.date).getTime(); const inWin = ts>=R.startTs && ts<=R.endTs;
+    const ts = new Date(t.date).getTime(); const inWin = ts>=R.startTs && ts<=R.endTs;
     if(t.type==="DEPOSIT"){ if(inWin) depositsP+=t.amount; }
     else if(t.type==="WITHDRAW"){ if(inWin) withdrawalsP+=t.amount; }
     else if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; if(inWin){ feesP+=t.fee||0; buysP++; } }
     else if(t.type==="SELL"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; const basisSold=avg*t.qty; const rz=(t.qty*t.price-(t.fee||0))-basisSold; p.qty-=t.qty; p.costBasis-=basisSold; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} if(inWin){ realizedP+=rz; feesP+=t.fee||0; sellsP++; } }
     else if(t.type==="ADJUST"){ if(t.target!=="cash"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} } }
   }
-  const sInfo=equityAt(R.startTs===-Infinity? -Infinity : R.startTs);
-  const eInfo=equityAt(R.endTs);
-  const equityStart=sInfo.v, equityEnd=eInfo.v;
-  const netInvestedP=depositsP-withdrawalsP;
-  const periodReturn=equityEnd-equityStart-netInvestedP;
-  const base=equityStart+Math.max(0,depositsP);
-  const periodReturnPct= base>1e-9 ? periodReturn/base*100 : 0;
-  const approx = sInfo.kind==="book" && equityStart>0;   // start valued at cost, not a live snapshot
-  return Object.assign(R, { depositsP,withdrawalsP,netInvestedP,realizedP,feesP,buysP,sellsP, equityStart,equityEnd,periodReturn,periodReturnPct, approx });
+  const sInfo = equityAt(R.startTs===-Infinity? -Infinity : R.startTs);
+  const eInfo = equityAt(R.endTs);
+  const equityStart = sInfo.v, equityEnd = eInfo.v;
+  const netInvestedP = depositsP - withdrawalsP;
+  const periodReturn = equityEnd - equityStart - netInvestedP;
+  const base = equityStart + Math.max(0, depositsP);
+  const periodReturnPct = base > 1e-9 ? periodReturn / base * 100 : 0;
+  const approx = sInfo.kind==="book" && equityStart>0;
+  return Object.assign(R, { depositsP, withdrawalsP, netInvestedP, realizedP, feesP, buysP, sellsP, equityStart, equityEnd, periodReturn, periodReturnPct, approx });
 }
-// Date-range selector bar (presets + custom dates).
+
 function rangeBarHTML(){
-  const r=(state.ui.range)||{preset:"all"};
-  const presets=[["all","All"],["ytd","YTD"],["30d","30D"],["90d","90D"],["1y","1Y"],["custom","Custom"]];
-  const chips=presets.map(([k,lbl])=>`<button class="rangechip ${r.preset===k?'active':''}" data-range="${k}">${lbl}</button>`).join("");
-  const inp="background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);margin-left:5px";
+  const r = (state.ui && state.ui.range) || { preset:"all" };
+  const presets = [["all","All"],["ytd","YTD"],["24h","24H"],["7d","7D"],["30d","30D"],["90d","90D"],["1y","1Y"],["custom","Custom"]];
+  const chips = presets.map(([k,lbl])=>`<button class="rangechip ${r.preset===k?'active':''}" data-range="${k}">${lbl}</button>`).join("");
+  const inp = "background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius);margin-left:5px";
   const custom = r.preset==="custom" ? `
     <div class="flex" style="gap:12px;flex-wrap:wrap;margin-top:9px">
       <label class="muted" style="font-size:12.5px">From<input type="date" id="rangeStart" value="${r.start||""}" style="${inp}"></label>
@@ -1427,134 +1665,384 @@ function rangeBarHTML(){
     </div>` : "";
   return `<div class="rangebar"><span class="muted" style="font-size:12px;margin-right:4px">Range</span>${chips}${custom}</div>`;
 }
+
 function wireRangeBar(){
   viewEl.querySelectorAll("[data-range]").forEach(b=>b.onclick=()=>{
-    state.ui.range=state.ui.range||{preset:"all"}; state.ui.range.preset=b.dataset.range;
-    persistLocal(); renderDashboard();
+    state.ui.range = state.ui.range || { preset:"all" };
+    state.ui.range.preset = b.dataset.range;
+    persistLocal();
+    fetchMarketHistoryForAllHeld();
+    renderDashboard();
   });
-  const rs=document.getElementById("rangeStart"), re=document.getElementById("rangeEnd");
+  const rs = document.getElementById("rangeStart"), re = document.getElementById("rangeEnd");
   if(rs) rs.onchange=()=>{ state.ui.range.start=rs.value||null; persistLocal(); renderDashboard(); };
   if(re) re.onchange=()=>{ state.ui.range.end=re.value||null; persistLocal(); renderDashboard(); };
 }
+
 function equityRangeLabel(){
-  const s=equitySeries();
-  if(s.length<2) return "";
-  const fmt=t=>new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'});
+  const s = equitySeries();
+  if(s.length < 2) return "";
+  const fmt = t => new Date(t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'});
   return `${fmt(s[0].t)} – ${fmt(s[s.length-1].t)}`;
 }
+
 function equityTickLabel(t, rangeDays){
-  const d=new Date(t);
-  if(rangeDays<2) return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  if(rangeDays<365) return d.toLocaleDateString([], {month:'short',day:'2-digit'});
+  const d = new Date(t);
+  if(rangeDays <= 1.2) return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  if(rangeDays <= 14) return d.toLocaleDateString([], {weekday:'short',day:'numeric'});
+  if(rangeDays < 365) return d.toLocaleDateString([], {month:'short',day:'numeric'});
   return d.toLocaleDateString([], {month:'short',year:'2-digit'});
 }
-// Net capital (deposits − withdrawals) as of time t.
-function netCapitalAt(t){
-  let n=0;
-  for(const tx of state.transactions){ const ts=new Date(tx.date).getTime(); if(ts<=t){ if(tx.type==="DEPOSIT") n+=tx.amount; else if(tx.type==="WITHDRAW") n-=tx.amount; } }
-  return n;
-}
-function equityChartHTML(currentEquity){
-  const R=activeRange();
-  let s=equitySeries(currentEquity);
-  if(!R.isAll){
-    s=s.filter(p=>p.t>=R.startTs && p.t<=R.endTs);
-    if(R.startTs!==-Infinity) s.unshift({t:R.startTs, v:equityAt(R.startTs).v, kind:"book"});
-    s.push({t:R.endTs, v:equityAt(R.endTs).v, kind:"live"});
-    s.sort((a,b)=>a.t-b.t);
-    const dd=[]; for(const p of s){ if(dd.length && dd[dd.length-1].t===p.t) dd[dd.length-1]=p; else dd.push(p);} s=dd;
+
+function equityChartHTML(currentEquity, holdings = []){
+  const R = activeRange();
+  const chartMode = (state.ui && state.ui.chartMode) || "equity";
+  const chartAsset = (state.ui && state.ui.chartAsset) || "all";
+
+  let s = equitySeries(currentEquity, chartAsset, R);
+
+  if(s.length < 2){
+    lastEquityChart = null;
+    return `
+      <div style="padding:16px 18px">
+        <div class="chart-header">
+          <h2 style="margin:0">Performance</h2>
+          <div class="chart-timeframe-bar">
+            ${[["24h","24H"],["7d","7D"],["30d","30D"],["90d","90D"],["1y","1Y"],["all","ALL"]].map(([k,lbl])=>`
+              <button class="chart-tf-btn ${R.preset===k?'active':''}" data-chart-range="${k}">${lbl}</button>`).join("")}
+          </div>
+        </div>
+        ${emptyBlock("📉","Not enough history to chart","Record a trade or wait for price history to build.")}
+      </div>`;
   }
-  if(s.length<2){ lastEquityChart=null; return emptyBlock("📉","Not enough history in this range","Pick a wider range, or record more trades/price refreshes over time."); }
-  const W=800, H=170, padL=6, padR=6, padT=14, padB=16;
-  const w=W-padL-padR, h=H-padT-padB;
-  const tMin=s[0].t, tMax=s[s.length-1].t;
-  const NC=s.map(p=>netCapitalAt(p.t));                       // net capital at each point
-  const allv=s.map(p=>p.v).concat(NC);
-  let vMin=Math.min(...allv), vMax=Math.max(...allv);
-  if(vMin===vMax){ vMin-=Math.max(1,Math.abs(vMin)*0.02); vMax+=Math.max(1,Math.abs(vMax)*0.02); }
-  const padv=(vMax-vMin)*0.10; vMin-=padv; vMax+=padv;
-  const X=t=> padL + (tMax===tMin?0:(t-tMin)/(tMax-tMin))*w;
-  const Y=v=> padT + (1-(v-vMin)/(vMax-vMin))*h;
-  const eqLine=s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
-  const ncLine=s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(NC[i]).toFixed(1)}`).join(" ");
 
-  // profit/loss band between equity and net-capital lines (split at crossings)
-  const polys=[];
-  for(let i=0;i<s.length-1;i++){
-    const x0=s[i].t,x1=s[i+1].t,e0=s[i].v,e1=s[i+1].v,n0=NC[i],n1=NC[i+1];
-    const d0=e0-n0,d1=e1-n1;
-    const poly=(ax,ae,bx,be,bn,an,up)=>({up, d:`M${X(ax).toFixed(1)},${Y(ae).toFixed(1)} L${X(bx).toFixed(1)},${Y(be).toFixed(1)} L${X(bx).toFixed(1)},${Y(bn).toFixed(1)} L${X(ax).toFixed(1)},${Y(an).toFixed(1)} Z`});
-    if((d0>=0&&d1>=0)||(d0<=0&&d1<=0)){ polys.push(poly(x0,e0,x1,e1,n1,n0,(d0+d1)>=0)); }
-    else { const f=d0/(d0-d1); const xc=x0+(x1-x0)*f, ec=e0+(e1-e0)*f, nc=n0+(n1-n0)*f;
-      polys.push(poly(x0,e0,xc,ec,nc,n0,d0>=0)); polys.push(poly(xc,ec,x1,e1,n1,nc,d1>=0)); }
+  const W = 800, H = 240, padL = 10, padR = 10, padT = 16, padB = 24;
+  const w = W - padL - padR, h = H - padT - padB;
+  const tMin = s[0].t, tMax = s[s.length-1].t;
+
+  let plotVal, benchVal, fmtMetric;
+  if(chartMode === "profit"){
+    plotVal = p => p.profit;
+    benchVal = () => 0;
+    fmtMetric = v => (v>=0?"+":"") + fmtUSD(v);
+  } else if(chartMode === "return"){
+    plotVal = p => p.retPct;
+    benchVal = () => 0;
+    fmtMetric = fmtPct;
+  } else {
+    plotVal = p => p.v;
+    benchVal = p => p.nc;
+    fmtMetric = fmtUSD;
   }
-  const band=polys.map(p=>`<path d="${p.d}" fill="${p.up?'var(--green)':'var(--red)'}" fill-opacity="0.15"/>`).join("");
 
-  const last=s[s.length-1].v, curNet=NC[NC.length-1], ret=last-curNet;
-  lastEquityChart={ series:s, NC, W,H,padL,padR,padT,padB,w,h,tMin,tMax,vMin,vMax, stroke:"var(--text)" };
+  const allv = s.map(plotVal).concat(s.map(benchVal));
+  let vMin = Math.min(...allv), vMax = Math.max(...allv);
+  if(vMin === vMax){
+    vMin -= Math.max(1, Math.abs(vMin)*0.05);
+    vMax += Math.max(1, Math.abs(vMax)*0.05);
+  }
+  const padv = (vMax - vMin) * 0.12;
+  vMin -= padv; vMax += padv;
 
-  const rangeDays=(tMax-tMin)/86400000;
-  const ticks=[]; const NT=5;
-  for(let i=0;i<NT;i++){ const f=i/(NT-1); const t=tMin+f*(tMax-tMin); const leftPct=(X(t)/W*100);
-    ticks.push(`<span style="left:${leftPct.toFixed(2)}%">${equityTickLabel(t,rangeDays)}</span>`); }
+  const X = t => padL + (tMax===tMin ? 0 : (t - tMin)/(tMax - tMin)) * w;
+  const Y = v => padT + (1 - (v - vMin)/(vMax - vMin)) * h;
+
+  const pts = s.map(p => ({ x: +X(p.t).toFixed(1), y: +Y(plotVal(p)).toFixed(1), p }));
+  const mainLinePath = smoothSvgPath(pts);
+
+  const baselineY = Math.min(padT + h, Math.max(padT, Y(0)));
+  const bottomY = padT + h;
+  const areaPath = pts.length ? `${mainLinePath} L${pts[pts.length-1].x.toFixed(1)},${bottomY.toFixed(1)} L${pts[0].x.toFixed(1)},${bottomY.toFixed(1)} Z` : "";
+
+  // Bench line (Net Capital for equity mode, Zero line for profit/return)
+  let benchLinePath = "";
+  if(chartMode === "equity"){
+    benchLinePath = s.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.nc).toFixed(1)}`).join(" ");
+  } else {
+    benchLinePath = `M${padL},${baselineY.toFixed(1)} L${W-padR},${baselineY.toFixed(1)}`;
+  }
+
+  // Profit/Loss band for equity mode
+  let band = "";
+  if(chartMode === "equity"){
+    const polys = [];
+    for(let i=0; i<s.length-1; i++){
+      const x0 = s[i].t, x1 = s[i+1].t, e0 = s[i].v, e1 = s[i+1].v, n0 = s[i].nc, n1 = s[i+1].nc;
+      const d0 = e0 - n0, d1 = e1 - n1;
+      const poly = (ax,ae,bx,be,bn,an,up) => ({ up, d:`M${X(ax).toFixed(1)},${Y(ae).toFixed(1)} L${X(bx).toFixed(1)},${Y(be).toFixed(1)} L${X(bx).toFixed(1)},${Y(bn).toFixed(1)} L${X(ax).toFixed(1)},${Y(an).toFixed(1)} Z` });
+      if((d0>=0 && d1>=0) || (d0<=0 && d1<=0)){
+        polys.push(poly(x0,e0,x1,e1,n1,n0,(d0+d1)>=0));
+      } else {
+        const f = d0 / (d0 - d1);
+        const xc = x0 + (x1 - x0)*f, ec = e0 + (e1 - e0)*f, nc = n0 + (n1 - n0)*f;
+        polys.push(poly(x0,e0,xc,ec,nc,n0,d0>=0));
+        polys.push(poly(xc,ec,x1,e1,n1,nc,d1>=0));
+      }
+    }
+    band = polys.map(p => `<path d="${p.d}" fill="${p.up?'var(--green)':'var(--red)'}" fill-opacity="0.14"/>`).join("");
+  }
+
+  const lastP = s[s.length-1];
+  const firstP = s[0];
+  const curPlotVal = plotVal(lastP);
+  const curProfit = lastP.profit;
+  const curRetPct = lastP.retPct;
+  const isPos = curProfit >= 0;
+
+  // Period stats
+  const metricValues = s.map(plotVal);
+  const periodHigh = Math.max(...metricValues);
+  const periodLow = Math.min(...metricValues);
+  const periodChange = curPlotVal - plotVal(firstP);
+
+  const mainColor = isPos ? "var(--green)" : "var(--red)";
+  lastEquityChart = {
+    series: s,
+    pts,
+    chartMode,
+    chartAsset,
+    plotVal,
+    benchVal,
+    fmtMetric,
+    W, H, padL, padR, padT, padB, w, h, tMin, tMax, vMin, vMax,
+    stroke: mainColor
+  };
+
+  const rangeDays = (tMax - tMin) / 86400000;
+  const ticks = [];
+  const NT = 5;
+  for(let i=0; i<NT; i++){
+    const f = i / (NT - 1);
+    const t = tMin + f * (tMax - tMin);
+    const leftPct = (X(t) / W * 100);
+    ticks.push(`<span style="left:${leftPct.toFixed(2)}%">${equityTickLabel(t, rangeDays)}</span>`);
+  }
+
+  // Asset filter dropdown options
+  const uniqueHoldings = (holdings || []).filter(h => h && h.asset);
+  let assetFilterHTML = "";
+  if(uniqueHoldings.length > 0){
+    const opts = `<option value="all" ${chartAsset==="all"?"selected":""}>Entire Portfolio</option>` +
+      uniqueHoldings.map(h => `<option value="${h.assetId}" ${chartAsset===h.assetId?"selected":""}>${(h.asset.symbol||"").toUpperCase()} · ${h.asset.name||h.asset.symbol}</option>`).join("");
+    assetFilterHTML = `<select class="chart-asset-select" id="chartAssetSelect" title="Filter performance by asset">${opts}</select>`;
+  }
+
+  const tfPresets = [["24h","24H"],["7d","7D"],["30d","30D"],["90d","90D"],["1y","1Y"],["all","ALL"]];
+  const tfChips = tfPresets.map(([k,lbl]) => `
+    <button class="chart-tf-btn ${R.preset===k?'active':''}" data-chart-range="${k}">${lbl}</button>
+  `).join("");
+
+  // Headline representation
+  let bigNumText = "";
+  let subBadgeText = "";
+  let subContextText = "";
+  if(chartMode === "profit"){
+    bigNumText = (curProfit >= 0 ? "+" : "") + fmtUSD(curProfit);
+    subBadgeText = `${fmtPct(curRetPct)} return`;
+    subContextText = `on ${fmtUSD(lastP.nc)} net capital`;
+  } else if(chartMode === "return"){
+    bigNumText = fmtPct(curRetPct);
+    subBadgeText = `${curProfit >= 0 ? "+" : ""}${fmtUSD(curProfit)} P/L`;
+    subContextText = `on ${fmtUSD(lastP.nc)} net capital`;
+  } else {
+    bigNumText = fmtUSD(lastP.v);
+    subBadgeText = `${curProfit >= 0 ? "+" : ""}${fmtUSD(curProfit)} (${fmtPct(curRetPct)})`;
+    subContextText = `vs ${fmtUSD(lastP.nc)} net capital`;
+  }
 
   return `
-    <div style="padding:14px 16px 10px">
-      <div class="flex" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-        <div><span class="bignum">${fmtUSD(last)}</span>
-          <span class="${cls(ret)}" style="font-weight:700;margin-left:6px">${arrow(ret)}${fmtUSD(Math.abs(ret))}</span>
-          <div class="muted" style="font-size:12px">equity vs ${fmtUSD(curNet)} net capital</div></div>
-        <div style="font-size:11.5px;text-align:right">
-          <span style="color:var(--text)">▬ Equity</span> &nbsp; <span class="muted">╌ Net capital</span>
-          <div class="muted" style="margin-top:2px"><span class="pos">▮</span> profit &nbsp;<span class="neg">▮</span> loss</div></div>
+    <div style="padding:16px 18px 12px">
+      <div class="chart-header">
+        <div class="flex" style="align-items:center;gap:12px;flex-wrap:wrap">
+          <h2 style="margin:0">Performance</h2>
+          <div class="chart-mode-seg" id="chartModeSeg" title="Switch chart representation">
+            <button class="${chartMode==='equity'?'active':''}" data-cmode="equity">Equity ($)</button>
+            <button class="${chartMode==='profit'?'active':''}" data-cmode="profit">Profit ($)</button>
+            <button class="${chartMode==='return'?'active':''}" data-cmode="return">Return (%)</button>
+          </div>
+        </div>
+        <div class="flex" style="align-items:center;gap:8px;flex-wrap:wrap">
+          ${assetFilterHTML}
+          <div class="chart-timeframe-bar" id="chartTfBar">
+            ${tfChips}
+          </div>
+        </div>
       </div>
+
+      <div class="flex" style="justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+        <div>
+          <span class="bignum ${chartMode!=='equity'?cls(curProfit):''}">${bigNumText}</span>
+          <span class="${cls(curProfit)}" style="font-weight:700;font-size:14px;margin-left:8px;padding:2px 7px;border-radius:4px;background:var(--chip)">
+            ${arrow(curProfit)}${subBadgeText}
+          </span>
+          <div class="muted" style="font-size:12px;margin-top:3px">${subContextText} · ${R.label}</div>
+        </div>
+        <div style="font-size:12px;text-align:right">
+          ${chartMode==='equity'
+            ? `<span style="color:var(--text);font-weight:600">▬ Equity</span> &nbsp; <span class="muted">╌ Net capital</span>
+               <div class="muted" style="margin-top:2px"><span class="pos">▮</span> profit &nbsp;<span class="neg">▮</span> loss</div>`
+            : `<span style="color:${mainColor};font-weight:600">▬ ${chartMode==='profit'?'Net Profit':'Return %'}</span> &nbsp; <span class="muted">╌ Zero baseline</span>`}
+        </div>
+      </div>
+
+      <div class="chart-stats-strip">
+        <div class="chart-stat-item"><span class="muted">Period Low:</span> <b>${fmtMetric(periodLow)}</b></div>
+        <div class="chart-stat-item"><span class="muted">Period High:</span> <b>${fmtMetric(periodHigh)}</b></div>
+        <div class="chart-stat-item"><span class="muted">Period Change:</span> <b class="${cls(periodChange)}">${arrow(periodChange)}${fmtMetric(Math.abs(periodChange))}</b></div>
+        <div class="chart-stat-item" style="margin-left:auto"><span class="muted" style="font-size:11px">✨ Real market valuation</span></div>
+      </div>
+
       <div class="eqchart" id="eqChart">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block">
-          <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="var(--border)" stroke-width="1"/>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:240px;display:block">
+          <defs>
+            <linearGradient id="eqGreenGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--green)" stop-opacity="0.32"/>
+              <stop offset="100%" stop-color="var(--green)" stop-opacity="0.02"/>
+            </linearGradient>
+            <linearGradient id="eqRedGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--red)" stop-opacity="0.32"/>
+              <stop offset="100%" stop-color="var(--red)" stop-opacity="0.02"/>
+            </linearGradient>
+          </defs>
+          <!-- Grid lines -->
+          <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3"/>
+          <line x1="${padL}" y1="${(padT+h*0.5).toFixed(1)}" x2="${W-padR}" y2="${(padT+h*0.5).toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3"/>
           <line x1="${padL}" y1="${padT+h}" x2="${W-padR}" y2="${padT+h}" stroke="var(--border)" stroke-width="1"/>
+
+          <!-- Area fill -->
+          <path d="${areaPath}" fill="${isPos?'url(#eqGreenGrad)':'url(#eqRedGrad)'}"/>
+
+          <!-- Equity profit/loss band -->
           ${band}
-          <path d="${ncLine}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>
-          <path d="${eqLine}" fill="none" stroke="var(--text)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+
+          <!-- Benchmark / Zero line -->
+          <path d="${benchLinePath}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+
+          <!-- Smooth Main Line -->
+          <path d="${mainLinePath}" fill="none" stroke="${mainColor}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
         </svg>
-        <div class="eqcross" id="eqCross" hidden></div>
-        <div class="eqdot" id="eqDot" hidden></div>
-        <div class="eqtip" id="eqTip" hidden></div>
+        <div class="eqcross" id="eqCross" style="display:none"></div>
+        <div class="eqdot" id="eqDot" style="display:none"></div>
+        <div class="eqtip" id="eqTip" style="display:none"></div>
         <div class="eqx">${ticks.join("")}</div>
       </div>
-      <div class="muted" style="font-size:11.5px;margin-top:6px">The band is your profit (green) or loss (red): equity above or below the capital you've put in. A deposit lifts both lines equally, so it doesn't look like a gain.</div>
+      <div class="muted" style="font-size:11.5px;margin-top:8px">
+        ${chartMode==='equity'
+          ? "The band highlights profit (green) or loss (red) above your invested capital. Additional capital inflows lift both lines equally without skewing returns."
+          : (chartMode==='profit' ? "Tracks net dollar gain/loss over time with zero baseline." : "Tracks overall portfolio percentage gain/loss over time with 0% baseline.")}
+      </div>
     </div>`;
 }
-// Attach hover crosshair + tooltip to the equity chart (called after each dashboard render).
+
+// Attach hover crosshair + tooltip + button handlers
 function wireEquityHover(){
-  const c=document.getElementById("eqChart"); const m=lastEquityChart; if(!c||!m) return;
-  const cross=document.getElementById("eqCross"), dot=document.getElementById("eqDot"), tip=document.getElementById("eqTip");
-  const Xv=t=> m.padL + (m.tMax===m.tMin?0:(t-m.tMin)/(m.tMax-m.tMin))*m.w;   // viewBox x
-  const Yv=v=> m.padT + (1-(v-m.vMin)/(m.vMax-m.vMin))*m.h;                    // viewBox y (== px, height 1:1)
-  function move(clientX){
-    const rect=c.getBoundingClientRect();
-    const svgX=(clientX-rect.left)/rect.width*m.W;
-    const tFrac=Math.max(0,Math.min(1,(svgX-m.padL)/m.w));
-    const t=m.tMin+tFrac*(m.tMax-m.tMin);
-    let bi=0; for(let i=0;i<m.series.length;i++){ if(Math.abs(m.series[i].t-t)<Math.abs(m.series[bi].t-t)) bi=i; }
-    const best=m.series[bi], nc=(m.NC&&m.NC[bi]!=null)?m.NC[bi]:null;
-    const bx=Xv(best.t)/m.W*rect.width, by=Yv(best.v);
-    cross.style.left=bx+"px"; cross.hidden=false;
-    dot.style.left=bx+"px"; dot.style.top=by+"px"; dot.style.background=m.stroke; dot.hidden=false;
-    const pl = nc!=null ? best.v-nc : null;
-    tip.innerHTML=`<div class="muted" style="font-size:11px">${new Date(best.t).toLocaleDateString([], {month:'short',day:'2-digit',year:'2-digit'})}</div>`+
-      `<b>${fmtUSD(best.v)}</b> <span class="muted">equity</span>`+
-      (nc!=null?`<br><span class="muted">${fmtUSD(nc)} net capital</span>`+
-        `<br><span class="${cls(pl)}">${arrow(pl)}${fmtUSD(Math.abs(pl))} P/L</span>`:``);
-    tip.hidden=false;
-    const tw=tip.offsetWidth||130, th=tip.offsetHeight||54; let tl=bx+12; if(tl+tw>rect.width) tl=bx-tw-12;
-    tip.style.left=Math.max(0,tl)+"px"; tip.style.top=Math.max(0, Math.min(by-th-8, m.padT+m.h-th))+"px";
+  const c = document.getElementById("eqChart");
+  const m = lastEquityChart;
+  if(!c || !m) return;
+
+  // Wire mode switcher and timeframe chips
+  const panel = document.getElementById("equityChartPanel") || c.closest(".panel");
+  if(panel){
+    panel.querySelectorAll("[data-cmode]").forEach(b => {
+      b.onclick = () => {
+        state.ui.chartMode = b.dataset.cmode;
+        persistLocal();
+        renderDashboard();
+      };
+    });
+    panel.querySelectorAll("[data-chart-range]").forEach(b => {
+      b.onclick = () => {
+        state.ui.range = state.ui.range || { preset:"all" };
+        state.ui.range.preset = b.dataset.chartRange;
+        persistLocal();
+        fetchMarketHistoryForAllHeld();
+        renderDashboard();
+      };
+    });
+    const assetSel = panel.querySelector("#chartAssetSelect");
+    if(assetSel){
+      assetSel.onchange = () => {
+        state.ui.chartAsset = assetSel.value;
+        persistLocal();
+        renderDashboard();
+      };
+    }
   }
-  function hide(){ cross.hidden=true; dot.hidden=true; tip.hidden=true; }
-  c.onmousemove=e=>move(e.clientX);
-  c.onmouseleave=hide;
-  c.ontouchstart=e=>{ if(e.touches[0]) move(e.touches[0].clientX); };
-  c.ontouchmove=e=>{ if(e.touches[0]){ move(e.touches[0].clientX); e.preventDefault(); } };
-  c.ontouchend=hide;
+
+  const cross = document.getElementById("eqCross"), dot = document.getElementById("eqDot"), tip = document.getElementById("eqTip");
+  if(!cross || !dot || !tip) return;
+
+  cross.style.top = m.padT + "px";
+  cross.style.height = m.h + "px";
+
+  const Xv = t => m.padL + (m.tMax===m.tMin ? 0 : (t - m.tMin)/(m.tMax - m.tMin)) * m.w;
+  const Yv = v => m.padT + (1 - (v - m.vMin)/(m.vMax - m.vMin)) * m.h;
+
+  function move(clientX){
+    const rect = c.getBoundingClientRect();
+    const svgX = (clientX - rect.left) / rect.width * m.W;
+    const tFrac = Math.max(0, Math.min(1, (svgX - m.padL) / m.w));
+    const t = m.tMin + tFrac * (m.tMax - m.tMin);
+
+    let bi = 0;
+    for(let i=0; i<m.series.length; i++){
+      if(Math.abs(m.series[i].t - t) < Math.abs(m.series[bi].t - t)) bi = i;
+    }
+    const best = m.series[bi];
+    const val = m.plotVal(best);
+    const bx = Xv(best.t) / m.W * rect.width;
+    const by = Yv(val);
+
+    cross.style.left = bx + "px";
+    cross.style.display = "block";
+    cross.removeAttribute("hidden");
+
+    dot.style.left = bx + "px";
+    dot.style.top = by + "px";
+    dot.style.background = m.stroke;
+    dot.style.display = "block";
+    dot.removeAttribute("hidden");
+
+    const dtStr = new Date(best.t).toLocaleDateString([], { month:'short', day:'numeric', year:'2-digit' }) +
+      " " + new Date(best.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+
+    let tipContent = `<div class="muted" style="font-size:11px">${dtStr}</div>`;
+    if(m.chartMode === "profit"){
+      tipContent += `<b>${(val>=0?"+":"") + fmtUSD(val)}</b> <span class="muted">profit</span>` +
+        `<br><span class="muted">equity: ${fmtUSD(best.v)}</span>` +
+        `<br><span class="${cls(best.retPct)}">${fmtPct(best.retPct)} return</span>`;
+    } else if(m.chartMode === "return"){
+      tipContent += `<b>${fmtPct(val)}</b> <span class="muted">return</span>` +
+        `<br><span class="muted">equity: ${fmtUSD(best.v)}</span>` +
+        `<br><span class="${cls(best.profit)}">${(best.profit>=0?"+":"")+fmtUSD(best.profit)} P/L</span>`;
+    } else {
+      tipContent += `<b>${fmtUSD(best.v)}</b> <span class="muted">equity</span>` +
+        `<br><span class="muted">${fmtUSD(best.nc)} net capital</span>` +
+        `<br><span class="${cls(best.profit)}">${arrow(best.profit)}${fmtUSD(Math.abs(best.profit))} (${fmtPct(best.retPct)})</span>`;
+    }
+
+    tip.innerHTML = tipContent;
+    tip.style.display = "block";
+    tip.removeAttribute("hidden");
+
+    const tw = tip.offsetWidth || 140, th = tip.offsetHeight || 60;
+    let tl = bx + 12;
+    if(tl + tw > rect.width) tl = bx - tw - 12;
+    tip.style.left = Math.max(0, tl) + "px";
+    tip.style.top = Math.max(0, Math.min(by - th - 8, m.padT + m.h - th)) + "px";
+  }
+
+  function hide(){
+    cross.style.display = "none"; cross.setAttribute("hidden", "");
+    dot.style.display = "none"; dot.setAttribute("hidden", "");
+    tip.style.display = "none"; tip.setAttribute("hidden", "");
+  }
+
+  c.onmousemove = e => move(e.clientX);
+  c.onmouseleave = hide;
+  c.ontouchstart = e => { if(e.touches[0]) move(e.touches[0].clientX); };
+  c.ontouchmove = e => { if(e.touches[0]){ move(e.touches[0].clientX); e.preventDefault(); } };
+  c.ontouchend = hide;
 }
 
 function holdingsTable(p, compact){
