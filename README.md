@@ -203,7 +203,7 @@ The app has no runtime dependencies. The repo adds a dev-only toolchain on top:
 - **Security tests** ([tests/e2e/security.spec.js](tests/e2e/security.spec.js)) feed XSS payloads, `javascript:` URLs and prototype-pollution ids through the real UI, and load the page under the production CSP to check nothing is blocked.
 
 - **[Playwright](https://playwright.dev/) end-to-end tests** ([tests/e2e](tests/e2e)) drive the real page in a headless browser — depositing, buying, selling, and checking the numbers the app renders, including the realized-P&L scenario worked through in this README. All third-party price/FX APIs are mocked in tests, so runs are deterministic and don't depend on the internet, an API key, or rate limits.
-- Run them locally with:
+- Run them locally (Node 22.17 or newer) with:
   ```bash
   npm install
   npx playwright install --with-deps chromium
