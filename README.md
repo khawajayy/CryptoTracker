@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/khawajayy/CryptoTracker/actions/workflows/ci.yml/badge.svg)](https://github.com/khawajayy/CryptoTracker/actions/workflows/ci.yml)
 
-A personal crypto **and** stocks trade ledger + portfolio tracker. Single HTML file, no build step. Works fully offline (data in your browser's localStorage), with **optional cloud sync** (Firebase) so the same ledger follows you across devices.
+A personal crypto **and** stocks trade ledger + portfolio tracker. Plain HTML/CSS/JS, no build step. Works fully offline (data in your browser's localStorage), with **optional cloud sync** (Firebase) so the same ledger follows you across devices.
 
 ## Run it
 
-- **Offline / single device:** double-click `index.html` (or open it in any browser). Done.
+- **Offline / single device:** double-click `index.html` (or open it in any browser). Done. Cloud sync needs the hosted version (browsers block the sync module on `file://`).
 - **Synced across devices:** deploy it once to Firebase Hosting and open its URL anywhere — see **Cloud sync** below.
 
 ## Cloud sync (Firebase) — one-time setup
@@ -27,7 +27,8 @@ This makes your ledger sync in real time across every device. You do the Firebas
 - Copy the `firebaseConfig` object it shows you.
 
 **5. Paste the config into the app**
-- Open `index.html`, find the `// ==== PASTE YOUR FIREBASE CONFIG HERE ====` block near the bottom, and replace the placeholder values with yours.
+- Open `js/cloud.js`, find the `// ==== PASTE YOUR FIREBASE CONFIG HERE ====` block, and replace the placeholder values with yours.
+- If your `authDomain` differs from the one in this repo, update the `frame-src` entry of the Content-Security-Policy in `firebase.json` to match.
 - Put your project id into `.firebaserc` (replace `PASTE_PROJECT_ID`).
 
 **6. Deploy (installs the Firebase CLI if needed)**
@@ -38,7 +39,10 @@ firebase deploy
 ```
 This publishes the site **and** the Firestore security rules (`firestore.rules`, which lets each user read/write only their own data). The command prints your live URL, e.g. `https://your-project.web.app`.
 
-Once the CI/CD pipeline below is set up, this manual step is only needed for the very first deploy — after that, merges to `main` deploy automatically.
+Once the CI/CD pipeline below is set up, merges to `main` deploy the site automatically. The pipeline only deploys **Hosting**, so whenever `firestore.rules` changes, publish the rules yourself:
+```bash
+firebase deploy --only firestore:rules
+```
 
 **7. Use it**
 - Open that URL on any device → **Settings → Cloud sync → Sign in with Google**. The first device uploads your existing data; other devices then load and stay in sync automatically. The header shows a `☁` status.
@@ -169,19 +173,44 @@ Change it in **Settings → Secondary currency** (PKR, INR, AED, GBP, EUR, CAD, 
 
 Ledger tab → **Export JSON** / **Import JSON**. Keep a backup, since clearing browser data wipes localStorage.
 
+## Project layout
+
+| File | What it is |
+| --- | --- |
+| `index.html` | Markup only |
+| `styles.css` | All styles |
+| `js/ledger-engine.js` | Pure accounting + validation (ledger replay, valuation, chart series, input sanitizers). No DOM, unit-tested in Node. |
+| `js/goal-calc.js` | Fixed / Step-Up goal math |
+| `js/app.js` | UI: rendering, the transaction dialog, price/news fetching |
+| `js/cloud.js` | Firebase sync (ES module). Talks to the app only through `window.CloudBridge`. |
+
+## Security
+
+- Everything that comes from outside (API responses, imported backups, the cloud copy, and localStorage itself) goes through the sanitizers in `js/ledger-engine.js` before it's used. Malformed transactions are dropped and counted, ids like `__proto__` are rejected, and numbers must be finite.
+- All dynamic text is HTML-escaped. Links and images must be absolute `http(s)` URLs, so a `javascript:` or `data:` URL from an API can't run.
+- `firebase.json` sends a strict **Content-Security-Policy** (no inline scripts, allow-listed API hosts) plus `nosniff`, `DENY` framing, HSTS and a locked-down Permissions-Policy. Dev files (`tests/`, `package.json`, configs) aren't published.
+- `firestore.rules` limits each user to their own `ledgers/{uid}` doc and checks its shape. Every other path is closed.
+- The Firebase web `apiKey` in `js/cloud.js` identifies the project and isn't a secret. It's still worth restricting it to your hosting domain in Google Cloud Console → APIs & Services → Credentials.
+- The Finnhub key is stored in your browser (and in your own cloud doc if you sign in). Finnhub expects it as a query parameter, so it appears in request URLs sent to finnhub.io.
+- Without a Finnhub key (or when the API fails) the News tab shows a clearly labelled placeholder that links to Yahoo Finance. It never shows made-up headlines.
+
 ## Testing & CI/CD
 
-The app itself stays a single dependency-free `index.html`, but the repo has a small dev-only test setup on top of it:
+The app has no runtime dependencies. The repo adds a dev-only toolchain on top:
+
+- **Lint + validation:** `npm run lint` runs [ESLint](https://eslint.org/) (with security rules such as no-eval) over all JS and [html-validate](https://html-validate.org/) over `index.html`.
+- **Unit tests** ([tests/unit](tests/unit)) cover the accounting engine, the input sanitizers and the goal math.
+- **Security tests** ([tests/e2e/security.spec.js](tests/e2e/security.spec.js)) feed XSS payloads, `javascript:` URLs and prototype-pollution ids through the real UI, and load the page under the production CSP to check nothing is blocked.
 
 - **[Playwright](https://playwright.dev/) end-to-end tests** ([tests/e2e](tests/e2e)) drive the real page in a headless browser — depositing, buying, selling, and checking the numbers the app renders, including the realized-P&L scenario worked through in this README. All third-party price/FX APIs are mocked in tests, so runs are deterministic and don't depend on the internet, an API key, or rate limits.
-- Run them locally with:
+- Run them locally (Node 22.17 or newer) with:
   ```bash
   npm install
   npx playwright install --with-deps chromium
-  npm run test:e2e
+  npm run validate     # lint + all tests
   ```
 
-**Pipeline:** every push and pull request against `main` runs the full E2E suite via [GitHub Actions](.github/workflows/ci.yml). A merge to `main` only deploys to Firebase Hosting if that run passes — a broken build never reaches production.
+**Pipeline:** every push and pull request against `main` runs lint, `npm audit` and the full test suite via [GitHub Actions](.github/workflows/ci.yml). A merge to `main` only deploys to Firebase Hosting if that run passes — a broken build never reaches production.
 
 Workflow for making a change:
 1. Create a branch, make the change.
