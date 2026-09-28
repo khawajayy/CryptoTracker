@@ -2,15 +2,25 @@
   "name": "cryptoledger",
   "private": true,
   "version": "1.0.0",
-  "description": "Personal crypto + stocks trade ledger and portfolio tracker (single-file app, no build step for the app itself).",
+  "description": "Personal crypto + stocks trade ledger and portfolio tracker (plain HTML/CSS/JS, no build step).",
   "scripts": {
+    "lint": "eslint . && html-validate index.html",
+    "lint:fix": "eslint . --fix",
     "test": "playwright test",
     "test:unit": "playwright test tests/unit",
     "test:e2e": "playwright test tests/e2e",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "validate": "npm run lint && npm test"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.48.0",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "html-validate": "^11.4.0",
     "http-server": "^14.1.1"
+  },
+  "engines": {
+    "node": ">=22.17"
   }
 }

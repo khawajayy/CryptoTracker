@@ -1,9 +1,32 @@
 rules_version = '2';
-// Each signed-in user can read/write only their own ledger document.
+// Each signed-in user can read/write only their own ledger document, and the
+// document must keep the shape the app writes (see getCloudPayload in js/app.js).
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function validLedger(d) {
+      return d.keys().hasOnly(['transactions', 'assets', 'settings', 'goals', 'favorites', 'updatedAt', 'goal'])
+        && d.keys().hasAll(['transactions', 'updatedAt'])
+        && d.transactions is list
+        && d.transactions.size() <= 50000
+        && d.updatedAt is number
+        && (!('assets' in d) || d.assets is map)
+        && (!('settings' in d) || d.settings is map)
+        && (!('goals' in d) || d.goals is list)
+        && (!('favorites' in d) || d.favorites is list);
+    }
+
     match /ledgers/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validLedger(request.resource.data);
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

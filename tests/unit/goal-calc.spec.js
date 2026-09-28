@@ -4,7 +4,7 @@ const {
   validateStepUpGoal,
   tradesToGoal,
   roundCurrency
-} = require('../../goal-calc.js');
+} = require("../../js/goal-calc.js");
 
 test.describe('GoalCalc - Validation', () => {
   test('rejects missing or invalid starting amount', () => {
