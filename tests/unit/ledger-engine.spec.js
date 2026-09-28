@@ -180,5 +180,51 @@ test.describe("LedgerEngine - validation", () => {
     expect(u.mode).toBe("goal");
     expect(u.range).toEqual({ preset: "custom", start: "2026-01-01", end: null });
     expect(u.chartAsset).toBe("all");
+    expect(u.combineSells).toBe(true);
   });
 });
+
+test.describe("LedgerEngine - trade analytics & grouped partial sells", () => {
+  test("combines successive partial sells of SNDK and computes collective P/L and analytics", () => {
+    const txns = [
+      { id: "1", type: "DEPOSIT", amount: 2000, date: iso(T0) },
+      { id: "2", type: "BUY", assetId: "stock:SNDK", qty: 100, price: 10, fee: 0, date: iso(T0 + D) },
+      { id: "3", type: "SELL", assetId: "stock:SNDK", qty: 50, price: 14, fee: 0, date: iso(T0 + 2 * D) },
+      { id: "4", type: "SELL", assetId: "stock:SNDK", qty: 50, price: 8, fee: 0, date: iso(T0 + 3 * D) },
+    ];
+    const res = LE.computeClosedTradesAndAnalytics(txns, { isAll: true }, { "stock:SNDK": { symbol: "SNDK" } });
+    expect(res.allSellGroups).toHaveLength(1);
+    const grp = res.allSellGroups[0];
+    expect(grp.isCombined).toBe(true);
+    expect(grp.items).toHaveLength(2);
+    expect(grp.totalQty).toBe(100);
+    expect(grp.totalCashImpact).toBe(1100);
+    expect(grp.collectiveRealized).toBe(100);
+
+    const a = res.analytics;
+    expect(a.totalClosedTrades).toBe(1);
+    expect(a.winTrades).toBe(1);
+    expect(a.winAmount).toBe(100);
+    expect(a.lossTrades).toBe(0);
+    expect(a.lossAmount).toBe(0);
+    expect(a.netRealized).toBe(100);
+    expect(a.winRatePct).toBe(100);
+    expect(a.profitFactor).toBe(Infinity);
+  });
+
+  test("intervening BUY resets active sell group so sells are treated as separate trades", () => {
+    const txns = [
+      { id: "1", type: "DEPOSIT", amount: 3000, date: iso(T0) },
+      { id: "2", type: "BUY", assetId: "stock:SNDK", qty: 100, price: 10, fee: 0, date: iso(T0 + D) },
+      { id: "3", type: "SELL", assetId: "stock:SNDK", qty: 50, price: 12, fee: 0, date: iso(T0 + 2 * D) },
+      { id: "4", type: "BUY", assetId: "stock:SNDK", qty: 50, price: 10, fee: 0, date: iso(T0 + 3 * D) },
+      { id: "5", type: "SELL", assetId: "stock:SNDK", qty: 100, price: 8, fee: 0, date: iso(T0 + 4 * D) },
+    ];
+    const res = LE.computeClosedTradesAndAnalytics(txns, { isAll: true }, { "stock:SNDK": { symbol: "SNDK" } });
+    expect(res.allSellGroups).toHaveLength(2);
+    expect(res.allSellGroups[0].isCombined).toBe(false);
+    expect(res.allSellGroups[1].isCombined).toBe(false);
+    expect(res.analytics.totalClosedTrades).toBe(2);
+  });
+});
+

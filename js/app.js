@@ -1005,11 +1005,12 @@ function wireRangeBar(){
     state.ui.range.preset = b.dataset.range;
     persistLocal();
     fetchMarketHistoryForAllHeld();
-    renderDashboard();
+    if(state.ui && state.ui.view === "ledger") renderLedger();
+    else renderDashboard();
   });
   const rs = document.getElementById("rangeStart"), re = document.getElementById("rangeEnd");
-  if(rs) rs.onchange=()=>{ state.ui.range.start=rs.value||null; persistLocal(); renderDashboard(); };
-  if(re) re.onchange=()=>{ state.ui.range.end=re.value||null; persistLocal(); renderDashboard(); };
+  if(rs) rs.onchange=()=>{ state.ui.range.start=rs.value||null; persistLocal(); if(state.ui && state.ui.view === "ledger") renderLedger(); else renderDashboard(); };
+  if(re) re.onchange=()=>{ state.ui.range.end=re.value||null; persistLocal(); if(state.ui && state.ui.view === "ledger") renderLedger(); else renderDashboard(); };
 }
 
 function niceTicks(min, max, count){
@@ -1786,49 +1787,302 @@ function filterAndRenderArticles(){
 
 function renderLedger(){
   const R = activeRange();
-  const txns = [...state.transactions]
-    .filter(t=>{ if(R.isAll) return true; const ts=new Date(t.date).getTime(); return ts>=R.startTs && ts<=R.endTs; })
-    .sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
-  // realized P/L per sell (chronological replay over ALL history for correct cost basis)
-  const realizedByTxn = LE.realizedBySell(state.transactions);
-  const rows = txns.map(t=>{
-    let detail, amount, showNote=false;
-    if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
-    else if(t.type==="ADJUST"){
-      showNote=true;
-      if(t.target==="cash"){ detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`; amount=t.delta; }
-      else{ const a=state.assets[t.assetId]||{symbol:t.assetId};
-        detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${esc((a.symbol||"").toUpperCase())} (holding adjustment)`; amount=null; }
-    }
-    else{
-      const a=state.assets[t.assetId]||{symbol:t.assetId};
-      const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
-      detail=`${fmtNum(t.qty)} ${esc((a.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
-      amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
-    }
-    const pl = (t.type==="SELL" && realizedByTxn[t.id]!=null) ? realizedByTxn[t.id] : null;
-    return `<tr>
-      <td><small class="muted">${new Date(t.date).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></td>
-      <td><span class="tag ${esc(t.type)}">${esc(t.type)}</span></td>
-      <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
-      <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
-      <td class="${pl==null?'muted':cls(pl)}">${pl==null?'—':arrow(pl)+fmtUSD(Math.abs(pl))}</td>
-      <td style="width:1px">
-        <button class="iconbtn" data-edit="${esc(t.id)}" title="Edit">✎</button>
-        <button class="iconbtn" data-del="${esc(t.id)}" title="Delete">🗑</button>
-      </td>
-    </tr>`;
-  }).join("");
+  const combineSells = state.ui.combineSells !== false;
+  state.ui.expandedGroups = state.ui.expandedGroups || {};
+
+  const { realizedByTxn, inRangeGroups, analytics } = LE.computeClosedTradesAndAnalytics(state.transactions, R, state.assets);
+  const a = analytics;
+  const hasTrades = a.totalClosedTrades > 0;
+  const winRateColor = !hasTrades ? 'neu' : (a.winRatePct >= 50 ? 'pos' : 'neg');
+  const netPnlColor = cls(a.netRealized);
+
+  const winBarPct = hasTrades ? (a.winTrades / a.totalClosedTrades * 100) : 0;
+  const lossBarPct = hasTrades ? (a.lossTrades / a.totalClosedTrades * 100) : 0;
+  const beBarPct = hasTrades ? (a.beTrades / a.totalClosedTrades * 100) : 0;
+
+  const profitFactorText = a.profitFactor === null ? '—' : (a.profitFactor === Infinity ? '∞' : a.profitFactor.toFixed(2));
+  const winLossRatioText = a.winLossRatio === null ? '—' : (a.winLossRatio === Infinity ? '∞' : a.winLossRatio.toFixed(2) + 'x');
+
+  let tableRows;
+  let totalRowsCount;
+
+  const fmtDate = d => new Date(d).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+
+  if(combineSells){
+    const nonSellItems = state.transactions.filter(t => {
+      if(t.type === "SELL") return false;
+      if(R.isAll) return true;
+      const ts = new Date(t.date).getTime();
+      return ts >= R.startTs && ts <= R.endTs;
+    }).map(t => ({ kind: "txn", date: t.date, seq: t._seq || 0, txn: t }));
+
+    const tradeItems = inRangeGroups.map(grp => ({
+      kind: "group",
+      date: grp.latestDate,
+      seq: grp.items[grp.items.length - 1].txn._seq || 0,
+      group: grp
+    }));
+
+    const displayItems = [...nonSellItems, ...tradeItems].sort((x, y) => {
+      const d = new Date(y.date) - new Date(x.date);
+      return d !== 0 ? d : y.seq - x.seq;
+    });
+
+    totalRowsCount = displayItems.length;
+
+    tableRows = displayItems.map(item => {
+      if(item.kind === "txn"){
+        const t = item.txn;
+        let detail, amount, showNote=false;
+        if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){
+          detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase();
+          amount=t.amount*(t.type==="DEPOSIT"?1:-1);
+        } else if(t.type==="ADJUST"){
+          showNote=true;
+          if(t.target==="cash"){
+            detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`;
+            amount=t.delta;
+          } else {
+            const ast=state.assets[t.assetId]||{symbol:t.assetId};
+            detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${esc((ast.symbol||"").toUpperCase())} (holding adjustment)`;
+            amount=null;
+          }
+        } else if(t.type==="BUY"){
+          const ast=state.assets[t.assetId]||{symbol:t.assetId};
+          const gross=t.qty*t.price, fee=t.fee||0;
+          showNote=true;
+          detail=`${fmtNum(t.qty)} ${esc((ast.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+          amount = -(gross+fee);
+        }
+        return `<tr>
+          <td><small class="muted">${fmtDate(t.date)}</small></td>
+          <td><span class="tag ${esc(t.type)}">${esc(t.type)}</span></td>
+          <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
+          <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
+          <td class="muted">—</td>
+          <td style="width:1px">
+            <button class="iconbtn" data-edit="${esc(t.id)}" title="Edit">✎</button>
+            <button class="iconbtn" data-del="${esc(t.id)}" title="Delete">🗑</button>
+          </td>
+        </tr>`;
+      } else {
+        const grp = item.group;
+        const isExp = !!state.ui.expandedGroups[grp.id];
+        const ast = state.assets[grp.assetId] || { symbol: grp.symbol };
+        const sym = esc((ast.symbol || grp.symbol || "").toUpperCase());
+        const pl = grp.collectiveRealized;
+        const plPct = grp.collectiveReturnPct;
+
+        if(!grp.isCombined){
+          const it = grp.items[0];
+          const t = it.txn;
+          const fee = t.fee || 0;
+          const detail = `${fmtNum(t.qty)} ${sym} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+          const amount = it.cashImpact;
+          return `<tr>
+            <td><small class="muted">${fmtDate(t.date)}</small></td>
+            <td><span class="tag SELL">SELL</span></td>
+            <td style="text-align:left">${detail}${t.note?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
+            <td class="${cls(amount)}">${sign(amount)+fmtUSD(amount)}</td>
+            <td class="${cls(pl)}">${arrow(pl)+fmtUSD(Math.abs(pl))}${grp.totalCostBasis>0?` <small class="${cls(plPct)}">(${fmtPct(plPct)})</small>`:''}</td>
+            <td style="width:1px">
+              <button class="iconbtn" data-edit="${esc(t.id)}" title="Edit">✎</button>
+              <button class="iconbtn" data-del="${esc(t.id)}" title="Delete">🗑</button>
+            </td>
+          </tr>`;
+        } else {
+          const partsSummary = grp.items.map(it => `${fmtNum(it.qty)} @ ${fmtPrice(it.price)}`).join(" + ");
+          const parentRow = `<tr class="trade-group-row is-combined" data-group-id="${esc(grp.id)}" style="background:var(--hover)">
+            <td>
+              <small class="muted">${fmtDate(grp.latestDate)}</small>
+              ${grp.earliestDate !== grp.latestDate ? `<div class="muted" style="font-size:10px">started ${new Date(grp.earliestDate).toLocaleDateString([], {month:'short',day:'numeric'})}</div>` : ''}
+            </td>
+            <td>
+              <span class="tag SELL">SELL</span>
+              <span class="tag combined" style="font-size:9.5px;margin-left:2px">${grp.items.length} parts</span>
+            </td>
+            <td style="text-align:left">
+              <b>${fmtNum(grp.totalQty)}</b> ${sym} @ avg ${fmtPrice(grp.avgPrice)}${grp.totalFees ? ` · fee ${fmtUSD(grp.totalFees)}` : ''}
+              <div class="muted" style="font-size:11.5px;margin-top:2px">Collective sell in ${grp.items.length} parts: ${partsSummary}</div>
+            </td>
+            <td class="${cls(grp.totalCashImpact)}">${sign(grp.totalCashImpact)+fmtUSD(grp.totalCashImpact)}</td>
+            <td class="${cls(pl)}" style="font-weight:700">
+              ${arrow(pl)+fmtUSD(Math.abs(pl))}
+              <small class="${cls(plPct)}" style="font-weight:600">(${fmtPct(plPct)})</small>
+            </td>
+            <td style="width:1px;white-space:nowrap">
+              <button class="iconbtn" data-toggle-group="${esc(grp.id)}" title="${isExp ? 'Hide parts breakdown' : 'Show partial fills breakdown'}">${isExp ? '▲' : '▼'}</button>
+              <button class="iconbtn" data-del-group="${esc(grp.id)}" title="Delete all ${grp.items.length} partial transactions">🗑</button>
+            </td>
+          </tr>`;
+
+          let childRows = "";
+          if(isExp){
+            childRows = grp.items.map((it, idx) => {
+              const t = it.txn;
+              const itPl = it.realized;
+              const itRet = it.basisSold > 0 ? (itPl / it.basisSold * 100) : 0;
+              return `<tr class="trade-subrow">
+                <td style="padding-left:22px"><small class="muted">↳ ${fmtDate(it.date)}</small></td>
+                <td><span class="tag" style="font-size:9px;opacity:.85">fill ${idx+1}/${grp.items.length}</span></td>
+                <td style="text-align:left">
+                  ${fmtNum(it.qty)} ${sym} @ ${fmtPrice(it.price)}${it.fee ? ` · fee ${fmtUSD(it.fee)}` : ''}
+                  ${t.note ? ` <small class="muted">— ${esc(t.note)}</small>` : ''}
+                </td>
+                <td class="${cls(it.cashImpact)}">${sign(it.cashImpact)+fmtUSD(it.cashImpact)}</td>
+                <td class="${cls(itPl)}">${arrow(itPl)+fmtUSD(Math.abs(itPl))} <small class="${cls(itRet)}">(${fmtPct(itRet)})</small></td>
+                <td style="width:1px">
+                  <button class="iconbtn" data-edit="${esc(t.id)}" title="Edit this partial fill">✎</button>
+                  <button class="iconbtn" data-del="${esc(t.id)}" title="Delete this partial fill">🗑</button>
+                </td>
+              </tr>`;
+            }).join("");
+          }
+          return parentRow + childRows;
+        }
+      }
+    }).join("");
+  } else {
+    const txns = [...state.transactions]
+      .filter(t => { if(R.isAll) return true; const ts=new Date(t.date).getTime(); return ts>=R.startTs && ts<=R.endTs; })
+      .sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
+    totalRowsCount = txns.length;
+    tableRows = txns.map(t => {
+      let detail, amount, showNote=false;
+      if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
+      else if(t.type==="ADJUST"){
+        showNote=true;
+        if(t.target==="cash"){ detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`; amount=t.delta; }
+        else{ const a=state.assets[t.assetId]||{symbol:t.assetId};
+          detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${esc((a.symbol||"").toUpperCase())} (holding adjustment)`; amount=null; }
+      } else {
+        const a=state.assets[t.assetId]||{symbol:t.assetId};
+        const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
+        detail=`${fmtNum(t.qty)} ${esc((a.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+        amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
+      }
+      const pl = (t.type==="SELL" && realizedByTxn[t.id]!=null) ? realizedByTxn[t.id] : null;
+      return `<tr>
+        <td><small class="muted">${fmtDate(t.date)}</small></td>
+        <td><span class="tag ${esc(t.type)}">${esc(t.type)}</span></td>
+        <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
+        <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
+        <td class="${pl==null?'muted':cls(pl)}">${pl==null?'—':arrow(pl)+fmtUSD(Math.abs(pl))}</td>
+        <td style="width:1px">
+          <button class="iconbtn" data-edit="${esc(t.id)}" title="Edit">✎</button>
+          <button class="iconbtn" data-del="${esc(t.id)}" title="Delete">🗑</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
   viewEl.innerHTML = `
+    ${rangeBarHTML()}
+    <div class="panel analytics-panel">
+      <h2>Trade Analytics ${R.isAll ? "" : `<span class="tag" style="font-size:9.5px">${R.label}</span>`}
+        <span class="spacer"></span>
+        <span class="muted" style="font-size:12px;font-weight:400">
+          ${hasTrades ? `${a.totalClosedTrades} closed trade${a.totalClosedTrades===1?'':'s'} evaluated` : 'No closed trades in this period'}
+        </span>
+      </h2>
+
+      <div class="analytics-hero">
+        <div>
+          <div class="label">Winning Percentage (Win Rate)</div>
+          <div class="flex" style="align-items:baseline;gap:8px">
+            <span class="big ${winRateColor}">${hasTrades ? a.winRatePct.toFixed(1) + '%' : '—'}</span>
+            <span class="tag ${winRateColor}" style="font-size:11px;font-weight:700">
+              ${hasTrades ? `${a.winTrades}W · ${a.lossTrades}L${a.beTrades ? ` · ${a.beTrades}BE` : ''}` : 'No closed trades'}
+            </span>
+          </div>
+          <div class="win-loss-bar" title="Wins: ${a.winTrades} (${winBarPct.toFixed(1)}%) | Losses: ${a.lossTrades} (${lossBarPct.toFixed(1)}%) | Breakeven: ${a.beTrades} (${beBarPct.toFixed(1)}%)">
+            <div class="win-seg" style="width:${winBarPct}%"></div>
+            <div class="loss-seg" style="width:${lossBarPct}%"></div>
+            <div class="be-seg" style="width:${beBarPct}%"></div>
+          </div>
+          <div class="muted" style="font-size:11.5px;margin-top:4px">
+            ${hasTrades ? `${winBarPct.toFixed(0)}% wins · ${lossBarPct.toFixed(0)}% losses${a.beTrades ? ` · ${beBarPct.toFixed(0)}% breakeven` : ''}` : 'Closed trade outcomes will appear here'}
+          </div>
+        </div>
+
+        <div>
+          <div class="label">Net Realized P&L</div>
+          <div class="value ${netPnlColor}">${hasTrades ? arrow(a.netRealized) + fmtUSD(Math.abs(a.netRealized)) : '$0.00'}</div>
+          <div class="sub muted">${hasTrades ? `${fmtPct(a.avgReturnPct)} avg return per trade` : 'from closed positions'}</div>
+          ${hasTrades ? secLine(a.netRealized, true) : ''}
+        </div>
+
+        <div>
+          <div class="label">Profit Factor & Expectancy</div>
+          <div class="value" style="font-family:var(--mono)">${profitFactorText}</div>
+          <div class="sub ${cls(a.expectancy)}">
+            ${hasTrades ? `${arrow(a.expectancy)}${fmtUSD(Math.abs(a.expectancy))} / trade` : 'expectancy'}
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Ratio of gross gains to gross losses</div>
+        </div>
+      </div>
+
+      <div class="grid cards" style="padding:14px 18px">
+        <div class="card">
+          <div class="label">Winning Trades</div>
+          <div class="value pos">${a.winTrades} <small class="muted" style="font-size:13px">trade${a.winTrades===1?'':'s'}</small></div>
+          <div class="sub pos" style="font-weight:600">+${fmtUSD(a.winAmount)} total won</div>
+          ${a.winAmount > 0 ? secLine(a.winAmount, true) : ''}
+        </div>
+
+        <div class="card">
+          <div class="label">Losing Trades</div>
+          <div class="value neg">${a.lossTrades} <small class="muted" style="font-size:13px">trade${a.lossTrades===1?'':'s'}</small></div>
+          <div class="sub neg" style="font-weight:600">-${fmtUSD(a.lossAmount)} total lost</div>
+          ${a.lossAmount > 0 ? secLine(-a.lossAmount, true) : ''}
+        </div>
+
+        <div class="card">
+          <div class="label">Avg Win vs Avg Loss</div>
+          <div class="value" style="font-size:19px">
+            <span class="pos">+${fmtUSD(a.avgWin)}</span>
+            <span class="muted" style="font-size:14px"> / </span>
+            <span class="neg">-${fmtUSD(a.avgLoss)}</span>
+          </div>
+          <div class="sub muted">Win/Loss payout ratio: <b>${winLossRatioText}</b></div>
+        </div>
+
+        <div class="card">
+          <div class="label">Best & Worst Trades</div>
+          <div class="value" style="font-size:18px">
+            ${a.bestTrade ? `<span class="pos">+${fmtUSD(a.bestTrade.collectiveRealized)}</span> <small class="muted" style="font-size:11.5px">(${esc((a.bestTrade.symbol||'').toUpperCase())})</small>` : '<span class="muted">—</span>'}
+          </div>
+          <div class="sub ${a.worstTrade ? 'neg' : 'muted'}">
+            ${a.worstTrade ? `Worst: -${fmtUSD(Math.abs(a.worstTrade.collectiveRealized))} (${esc((a.worstTrade.symbol||'').toUpperCase())})` : 'No losing trades'}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="label">Trade Volume & Fees</div>
+          <div class="value">${fmtUSD(a.totalVolume)}</div>
+          <div class="sub muted">Fees paid: <b>${fmtUSD(a.totalFees)}</b> · Breakeven: <b>${a.beTrades}</b></div>
+        </div>
+
+        <div class="card">
+          <div class="label">Trade Expectancy</div>
+          <div class="value ${cls(a.expectancy)}">${arrow(a.expectancy)}${fmtUSD(Math.abs(a.expectancy))}</div>
+          <div class="sub muted">average profit per trade entered</div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel">
-      <h2>Transaction ledger ${R.isAll?"":`<span class="tag" style="font-size:9.5px">${R.label}</span>`}<span class="spacer"></span>
+      <h2>Transaction ledger ${R.isAll ? "" : `<span class="tag" style="font-size:9.5px">${R.label}</span>`}<span class="spacer"></span>
+        <button class="btn sm ${combineSells ? 'primary' : ''}" id="toggleCombineBtn" title="Combine successive partial sells for the same asset">${combineSells ? '✓ Combine partial sells' : 'Combine partial sells'}</button>
         <button class="btn sm" id="exportBtn">⭳ Export JSON</button>
         <button class="btn sm" id="importBtn">⭱ Import JSON</button>
         <button class="btn sm primary" id="addBtn2">+ Add</button>
       </h2>
-      ${txns.length? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th>Realized P/L</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-        : emptyBlock("🧾", R.isAll?"No transactions yet":"No transactions in this range", R.isAll?"Start by adding a Deposit for your initial capital.":"Change the date range on the Dashboard, or pick All.")}
+      ${totalRowsCount ? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th>Realized P/L</th><th></th></tr></thead><tbody>${tableRows}</tbody></table>`
+        : emptyBlock("🧾", R.isAll ? "No transactions yet" : "No transactions in this range", R.isAll ? "Start by adding a Deposit for your initial capital." : "Change the date range on the Dashboard, or pick All.")}
     </div>`;
+
+  wireRangeBar();
 }
 
 function renderSettings(){
@@ -2480,6 +2734,48 @@ function openHoldingTxn(assetId, type, closeAll){
 
 // event delegation for ledger + dynamically-rendered buttons
 viewEl.addEventListener("click",e=>{
+  const tgBtn = e.target.closest("[data-toggle-group]");
+  if(tgBtn){
+    const gid = tgBtn.dataset.toggleGroup;
+    state.ui.expandedGroups = state.ui.expandedGroups || {};
+    state.ui.expandedGroups[gid] = !state.ui.expandedGroups[gid];
+    renderLedger();
+    return;
+  }
+  const delGrpBtn = e.target.closest("[data-del-group]");
+  if(delGrpBtn){
+    const gid = delGrpBtn.dataset.delGroup;
+    const { sellGroupsMap } = LE.computeClosedTradesAndAnalytics(state.transactions, null, state.assets);
+    const grp = sellGroupsMap && sellGroupsMap[gid];
+    const n = grp ? grp.items.length : 0;
+    if(confirm(`Delete all ${n} partial transactions in this combined trade?`)){
+      const idSet = new Set(grp ? grp.items.map(it => it.txn.id) : []);
+      state.transactions = state.transactions.filter(x => !idSet.has(x.id));
+      save();
+      render();
+      toast(`Deleted ${idSet.size} transactions`);
+    }
+    return;
+  }
+  const cbBtn = e.target.closest("#toggleCombineBtn");
+  if(cbBtn){
+    state.ui.combineSells = state.ui.combineSells === false ? true : false;
+    persistLocal();
+    renderLedger();
+    toast(state.ui.combineSells ? "Combining successive partial sells" : "Showing all individual transactions");
+    return;
+  }
+  const rowGrp = e.target.closest(".trade-group-row.is-combined");
+  if(rowGrp && !e.target.closest("button")){
+    const gid = rowGrp.dataset.groupId;
+    if(gid){
+      state.ui.expandedGroups = state.ui.expandedGroups || {};
+      state.ui.expandedGroups[gid] = !state.ui.expandedGroups[gid];
+      renderLedger();
+      return;
+    }
+  }
+
   const ed=e.target.closest("[data-edit]"); const del=e.target.closest("[data-del]");
   const buy=e.target.closest("[data-buy]"), sell=e.target.closest("[data-sell]"), close=e.target.closest("[data-close]");
   if(buy){ openHoldingTxn(buy.dataset.buy,"BUY",false); return; }

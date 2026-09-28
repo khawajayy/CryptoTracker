@@ -205,7 +205,7 @@
   const RANGES = ["all", "ytd", "24h", "7d", "30d", "90d", "1y", "custom"];
   const DAY = /^\d{4}-\d{2}-\d{2}$/;
   function sanitizeUi(u) {
-    const o = { view: "dashboard", mode: "portfolio", theme: "light", range: { preset: "all", start: null, end: null }, chartMode: "equity", chartAsset: "all", chart: { netcap: true } };
+    const o = { view: "dashboard", mode: "portfolio", theme: "light", range: { preset: "all", start: null, end: null }, chartMode: "equity", chartAsset: "all", chart: { netcap: true }, combineSells: true, expandedGroups: dict() };
     if (!u || typeof u !== "object") return o;
     if (VIEWS.includes(u.view)) o.view = u.view;
     if (u.mode === "goal") o.mode = "goal";
@@ -213,6 +213,8 @@
     if (["equity", "profit", "return"].includes(u.chartMode)) o.chartMode = u.chartMode;
     if (u.chartAsset === "all" || isSafeId(u.chartAsset)) o.chartAsset = u.chartAsset;
     if (u.chart && u.chart.netcap === false) o.chart.netcap = false;
+    if (u.combineSells === false) o.combineSells = false;
+    if (u.expandedGroups && typeof u.expandedGroups === "object") o.expandedGroups = u.expandedGroups;
     const r = u.range;
     if (r && typeof r === "object") {
       if (RANGES.includes(r.preset)) o.range.preset = r.preset;
@@ -350,6 +352,176 @@
     const m = dict();
     replay(txns, (t, r) => { if (t.type === "SELL") m[t.id] = r; });
     return m;
+  }
+
+  /**
+   * Groups successive sell transactions of the same asset into combined trades,
+   * calculates collective realized profit/loss, and computes comprehensive trading analytics.
+   */
+  function computeClosedTradesAndAnalytics(allTxns, range, assets) {
+    const chron = sortChrono(allTxns || []);
+    const pos = dict();
+    const realizedByTxn = dict();
+    const basisByTxn = dict();
+    const activeSellGroupByAsset = dict();
+    const allSellGroups = [];
+    const sellGroupsMap = dict();
+
+    for (const t of chron) {
+      if (t.type === "BUY") {
+        const gross = t.qty * t.price, fee = t.fee || 0;
+        const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+        p.qty += t.qty;
+        p.costBasis += gross + fee;
+
+        if (activeSellGroupByAsset[t.assetId]) {
+          delete activeSellGroupByAsset[t.assetId];
+        }
+      } else if (t.type === "SELL") {
+        const gross = t.qty * t.price, fee = t.fee || 0;
+        const cashImpact = gross - fee;
+        const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+        const avg = p.qty > 0 ? p.costBasis / p.qty : 0;
+        const basisSold = avg * t.qty;
+        const rz = cashImpact - basisSold;
+
+        realizedByTxn[t.id] = rz;
+        basisByTxn[t.id] = basisSold;
+
+        p.qty -= t.qty;
+        p.costBasis -= basisSold;
+        if (p.qty < EPS) { p.qty = 0; p.costBasis = 0; }
+
+        let grp = activeSellGroupByAsset[t.assetId];
+        if (!grp) {
+          const ast = assets && assets[t.assetId];
+          grp = {
+            id: "trade_grp_" + t.id,
+            assetId: t.assetId,
+            symbol: (ast && ast.symbol) || t.assetId,
+            items: [],
+          };
+          activeSellGroupByAsset[t.assetId] = grp;
+          allSellGroups.push(grp);
+          sellGroupsMap[grp.id] = grp;
+        }
+        grp.items.push({
+          txn: t,
+          realized: rz,
+          basisSold,
+          cashImpact,
+          qty: t.qty,
+          price: t.price,
+          fee,
+          date: t.date,
+        });
+      } else if (t.type === "ADJUST") {
+        if (t.target !== "cash") {
+          const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+          if (t.qtyDelta >= 0) {
+            p.qty += t.qtyDelta;
+          } else {
+            const rq = Math.min(-t.qtyDelta, p.qty);
+            const avg = p.qty > 0 ? p.costBasis / p.qty : 0;
+            p.qty -= rq;
+            p.costBasis -= avg * rq;
+          }
+          if (p.qty < EPS) { p.qty = 0; p.costBasis = 0; }
+
+          if (activeSellGroupByAsset[t.assetId]) {
+            delete activeSellGroupByAsset[t.assetId];
+          }
+        }
+      }
+    }
+
+    for (const grp of allSellGroups) {
+      grp.totalQty = grp.items.reduce((acc, it) => acc + it.qty, 0);
+      grp.totalGross = grp.items.reduce((acc, it) => acc + it.qty * it.price, 0);
+      grp.totalFees = grp.items.reduce((acc, it) => acc + it.fee, 0);
+      grp.totalCashImpact = grp.items.reduce((acc, it) => acc + it.cashImpact, 0);
+      grp.totalCostBasis = grp.items.reduce((acc, it) => acc + it.basisSold, 0);
+      grp.collectiveRealized = grp.items.reduce((acc, it) => acc + it.realized, 0);
+      grp.collectiveReturnPct = grp.totalCostBasis > 0 ? (grp.collectiveRealized / grp.totalCostBasis) * 100 : 0;
+      grp.avgPrice = grp.totalQty > 0 ? grp.totalGross / grp.totalQty : 0;
+      grp.earliestDate = grp.items[0].date;
+      grp.latestDate = grp.items[grp.items.length - 1].date;
+      grp.isCombined = grp.items.length > 1;
+    }
+
+    const R = range || { isAll: true };
+    const inRangeGroups = allSellGroups.filter((grp) => {
+      if (R.isAll) return true;
+      const ts = new Date(grp.latestDate).getTime();
+      return ts >= R.startTs && ts <= R.endTs;
+    });
+
+    const totalClosedTrades = inRangeGroups.length;
+    let winTrades = 0, winAmount = 0;
+    let lossTrades = 0, lossAmount = 0;
+    let beTrades = 0;
+    let totalVolume = 0, totalFees = 0, sumReturnPct = 0;
+    let bestTrade = null, worstTrade = null;
+
+    for (const tr of inRangeGroups) {
+      const rz = tr.collectiveRealized;
+      totalVolume += tr.totalGross;
+      totalFees += tr.totalFees;
+      sumReturnPct += tr.collectiveReturnPct;
+
+      if (rz > 0.005) {
+        winTrades++;
+        winAmount += rz;
+        if (!bestTrade || rz > bestTrade.collectiveRealized) {
+          bestTrade = tr;
+        }
+      } else if (rz < -0.005) {
+        lossTrades++;
+        lossAmount += Math.abs(rz);
+        if (!worstTrade || rz < worstTrade.collectiveRealized) {
+          worstTrade = tr;
+        }
+      } else {
+        beTrades++;
+      }
+    }
+
+    const netRealized = winAmount - lossAmount;
+    const winRatePct = totalClosedTrades > 0 ? (winTrades / totalClosedTrades) * 100 : 0;
+    const profitFactor = lossAmount > 0 ? winAmount / lossAmount : (winAmount > 0 ? Infinity : null);
+    const avgWin = winTrades > 0 ? winAmount / winTrades : 0;
+    const avgLoss = lossTrades > 0 ? lossAmount / lossTrades : 0;
+    const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : (avgWin > 0 ? Infinity : null);
+    const expectancy = totalClosedTrades > 0 ? netRealized / totalClosedTrades : 0;
+    const avgReturnPct = totalClosedTrades > 0 ? sumReturnPct / totalClosedTrades : 0;
+
+    return {
+      realizedByTxn,
+      basisByTxn,
+      allSellGroups,
+      inRangeGroups,
+      sellGroupsMap,
+      analytics: {
+        totalClosedTrades,
+        winTrades,
+        winAmount,
+        lossTrades,
+        lossAmount,
+        beTrades,
+        netRealized,
+        winRatePct,
+        profitFactor,
+        avgWin,
+        avgLoss,
+        winLossRatio,
+        expectancy,
+        avgReturnPct,
+        totalVolume,
+        totalFees,
+        bestTrade,
+        worstTrade,
+      },
+    };
   }
 
   /* ---------- historical valuation ---------- */
@@ -498,7 +670,7 @@
     makeId, safeUrl, isSafeId,
     sanitizeAsset, sanitizeTransaction, sanitizeTransactions, sanitizeAssets, sanitizeFavorites,
     sanitizeSettings, sanitizeGoals, sanitizePrices, sanitizePriceHistory, sanitizeEquityHistory, sanitizeUi,
-    sortChrono, applyTxn, replay, summarize, realizedBySell,
+    sortChrono, applyTxn, replay, summarize, realizedBySell, computeClosedTradesAndAnalytics,
     interpolate, priceAt, valueSeries, valueAt, equitySeries, rangeStats,
   };
 });
