@@ -258,6 +258,20 @@
   .news-loading{padding:60px 20px;text-align:center;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:12px}
   .news-spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:newsSpin .8s linear infinite}
   @keyframes newsSpin{to{transform:rotate(360deg)}}
+  /* Ledger trade analytics and combined trade rows */
+  .analytics-panel{margin-bottom:18px}
+  .analytics-hero{display:grid;grid-template-columns:minmax(280px,1.4fr) minmax(200px,1fr) minmax(200px,1fr);gap:18px;padding:18px;border-bottom:1px solid var(--border);align-items:center}
+  @media(max-width:860px){.analytics-hero{grid-template-columns:1fr}}
+  .win-loss-bar{display:flex;height:8px;border-radius:999px;overflow:hidden;background:var(--chip);margin-top:8px;border:1px solid var(--border)}
+  .win-loss-bar .win-seg{background:var(--green);height:100%;transition:width .3s}
+  .win-loss-bar .loss-seg{background:var(--red);height:100%;transition:width .3s}
+  .win-loss-bar .be-seg{background:var(--muted);height:100%;transition:width .3s}
+  .tag.combined{color:var(--accent2);border-color:var(--accent2);background:rgba(8,145,178,.1)}
+  :root[data-theme="dark"] .tag.combined{color:#38bdf8;border-color:#0369a1;background:rgba(56,189,248,.12)}
+  .trade-group-row.is-combined{cursor:pointer}
+  .trade-subrow{background:var(--panel2);font-size:12.5px}
+  .trade-subrow td{border-bottom:1px dashed var(--border)!important;padding-top:6px;padding-bottom:6px}
+  .trade-subrow:last-child td{border-bottom:1px solid var(--border)!important}
 </style>
 </head>
 <body>
@@ -479,7 +493,7 @@ function defaultState(){
     equityHistory: [],                               // device-local equity snapshots [{t,v}]
     priceHistory: {},                                // device-local historical market prices: assetId -> {points:[{t,p}], days, updatedAt}
     dataUpdatedAt: 0,                                 // ms of last synced-data change (for newest-wins)
-    ui: { view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}, chartMode:"equity", chartAsset:"all" }
+    ui: { view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}, chartMode:"equity", chartAsset:"all", combineSells:true, expandedGroups:{} }
   };
 }
 function normalizeState(s, keepUi){
@@ -487,11 +501,13 @@ function normalizeState(s, keepUi){
   const merged = Object.assign(d, s, {
     settings: Object.assign(d.settings, s.settings||{}),
     fx: Object.assign(d.fx, s.fx||{}),
-    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}, chartMode:"equity", chartAsset:"all"}, s.ui||{})
+    ui: keepUi || Object.assign({view:"dashboard", mode:"portfolio", theme:"light", range:{preset:"all", start:null, end:null}, chartMode:"equity", chartAsset:"all", combineSells:true, expandedGroups:{}}, s.ui||{})
   });
   if(!merged.ui.range) merged.ui.range={preset:"all", start:null, end:null};
   if(!merged.ui.chartMode) merged.ui.chartMode="equity";
   if(!merged.ui.chartAsset) merged.ui.chartAsset="all";
+  if(merged.ui.combineSells === undefined) merged.ui.combineSells = true;
+  if(!merged.ui.expandedGroups) merged.ui.expandedGroups = {};
   merged.goals = Array.isArray(s.goals) ? s.goals : [];
   // migrate the old single-goal shape ({target,profitPct}) into the list
   if(merged.goals.length===0 && s.goal && s.goal.target>0){
@@ -1667,16 +1683,20 @@ function rangeBarHTML(){
 }
 
 function wireRangeBar(){
+  const reRender = () => {
+    if(state.ui && state.ui.view === "ledger") renderLedger();
+    else renderDashboard();
+  };
   viewEl.querySelectorAll("[data-range]").forEach(b=>b.onclick=()=>{
     state.ui.range = state.ui.range || { preset:"all" };
     state.ui.range.preset = b.dataset.range;
     persistLocal();
     fetchMarketHistoryForAllHeld();
-    renderDashboard();
+    reRender();
   });
   const rs = document.getElementById("rangeStart"), re = document.getElementById("rangeEnd");
-  if(rs) rs.onchange=()=>{ state.ui.range.start=rs.value||null; persistLocal(); renderDashboard(); };
-  if(re) re.onchange=()=>{ state.ui.range.end=re.value||null; persistLocal(); renderDashboard(); };
+  if(rs) rs.onchange=()=>{ state.ui.range.start=rs.value||null; persistLocal(); reRender(); };
+  if(re) re.onchange=()=>{ state.ui.range.end=re.value||null; persistLocal(); reRender(); };
 }
 
 function equityRangeLabel(){
@@ -2471,60 +2491,473 @@ function filterAndRenderArticles(){
   }).join("");
 }
 
+/* ---------- closed trades & trade analytics engine ---------- */
+// Groups successive sell transactions of the same asset into combined trades,
+// calculates collective realized profit/loss, and computes comprehensive trading analytics.
+function computeClosedTradesAndAnalytics(allTxns, range){
+  const chron = [...(allTxns || state.transactions)].sort((a,b)=>{
+    const d = new Date(a.date) - new Date(b.date);
+    return d !== 0 ? d : (a._seq||0) - (b._seq||0);
+  });
+
+  const pos = {};
+  const realizedByTxn = {};
+  const basisByTxn = {};
+  const activeSellGroupByAsset = {};
+  const allSellGroups = [];
+  const sellGroupsMap = {};
+
+  for(const t of chron){
+    if(t.type === "BUY"){
+      const gross = t.qty * t.price, fee = t.fee || 0;
+      const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+      p.qty += t.qty;
+      p.costBasis += gross + fee;
+
+      // An intervening BUY terminates any active successive sell group for this asset
+      if(activeSellGroupByAsset[t.assetId]){
+        delete activeSellGroupByAsset[t.assetId];
+      }
+    }
+    else if(t.type === "SELL"){
+      const gross = t.qty * t.price, fee = t.fee || 0;
+      const cashImpact = gross - fee;
+      const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+      const avg = p.qty > 0 ? p.costBasis / p.qty : 0;
+      const basisSold = avg * t.qty;
+      const rz = cashImpact - basisSold;
+
+      realizedByTxn[t.id] = rz;
+      basisByTxn[t.id] = basisSold;
+
+      p.qty -= t.qty;
+      p.costBasis -= basisSold;
+      if(p.qty < 1e-9){ p.qty = 0; p.costBasis = 0; }
+
+      let grp = activeSellGroupByAsset[t.assetId];
+      if(!grp){
+        grp = {
+          id: "trade_grp_" + t.id,
+          assetId: t.assetId,
+          symbol: (state.assets[t.assetId] && state.assets[t.assetId].symbol) || t.assetId,
+          items: []
+        };
+        activeSellGroupByAsset[t.assetId] = grp;
+        allSellGroups.push(grp);
+        sellGroupsMap[grp.id] = grp;
+      }
+      grp.items.push({
+        txn: t,
+        realized: rz,
+        basisSold: basisSold,
+        cashImpact: cashImpact,
+        qty: t.qty,
+        price: t.price,
+        fee: fee,
+        date: t.date
+      });
+    }
+    else if(t.type === "ADJUST"){
+      if(t.target !== "cash"){
+        const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+        if(t.qtyDelta >= 0){
+          p.qty += t.qtyDelta;
+        } else {
+          const rq = Math.min(-t.qtyDelta, p.qty);
+          const avg = p.qty > 0 ? p.costBasis / p.qty : 0;
+          p.qty -= rq;
+          p.costBasis -= avg * rq;
+        }
+        if(p.qty < 1e-9){ p.qty = 0; p.costBasis = 0; }
+
+        if(activeSellGroupByAsset[t.assetId]){
+          delete activeSellGroupByAsset[t.assetId];
+        }
+      }
+    }
+  }
+
+  for(const grp of allSellGroups){
+    grp.totalQty = grp.items.reduce((acc, it) => acc + it.qty, 0);
+    grp.totalGross = grp.items.reduce((acc, it) => acc + (it.qty * it.price), 0);
+    grp.totalFees = grp.items.reduce((acc, it) => acc + it.fee, 0);
+    grp.totalCashImpact = grp.items.reduce((acc, it) => acc + it.cashImpact, 0);
+    grp.totalCostBasis = grp.items.reduce((acc, it) => acc + it.basisSold, 0);
+    grp.collectiveRealized = grp.items.reduce((acc, it) => acc + it.realized, 0);
+    grp.collectiveReturnPct = grp.totalCostBasis > 0 ? (grp.collectiveRealized / grp.totalCostBasis * 100) : 0;
+    grp.avgPrice = grp.totalQty > 0 ? (grp.totalGross / grp.totalQty) : 0;
+    grp.earliestDate = grp.items[0].date;
+    grp.latestDate = grp.items[grp.items.length - 1].date;
+    grp.isCombined = grp.items.length > 1;
+  }
+
+  const R = range || activeRange();
+  const inRangeGroups = allSellGroups.filter(grp => {
+    if(R.isAll) return true;
+    const ts = new Date(grp.latestDate).getTime();
+    return ts >= R.startTs && ts <= R.endTs;
+  });
+
+  const totalClosedTrades = inRangeGroups.length;
+  let winTrades = 0, winAmount = 0;
+  let lossTrades = 0, lossAmount = 0;
+  let beTrades = 0;
+  let totalVolume = 0, totalFees = 0, sumReturnPct = 0;
+  let bestTrade = null, worstTrade = null;
+
+  for(const tr of inRangeGroups){
+    const rz = tr.collectiveRealized;
+    totalVolume += tr.totalGross;
+    totalFees += tr.totalFees;
+    sumReturnPct += tr.collectiveReturnPct;
+
+    if(rz > 0.005){
+      winTrades++;
+      winAmount += rz;
+      if(!bestTrade || rz > bestTrade.collectiveRealized){
+        bestTrade = tr;
+      }
+    } else if(rz < -0.005){
+      lossTrades++;
+      lossAmount += Math.abs(rz);
+      if(!worstTrade || rz < worstTrade.collectiveRealized){
+        worstTrade = tr;
+      }
+    } else {
+      beTrades++;
+    }
+  }
+
+  const netRealized = winAmount - lossAmount;
+  const winRatePct = totalClosedTrades > 0 ? (winTrades / totalClosedTrades * 100) : 0;
+  const profitFactor = lossAmount > 0 ? (winAmount / lossAmount) : (winAmount > 0 ? Infinity : null);
+  const avgWin = winTrades > 0 ? (winAmount / winTrades) : 0;
+  const avgLoss = lossTrades > 0 ? (lossAmount / lossTrades) : 0;
+  const winLossRatio = avgLoss > 0 ? (avgWin / avgLoss) : (avgWin > 0 ? Infinity : null);
+  const expectancy = totalClosedTrades > 0 ? (netRealized / totalClosedTrades) : 0;
+  const avgReturnPct = totalClosedTrades > 0 ? (sumReturnPct / totalClosedTrades) : 0;
+
+  return {
+    realizedByTxn,
+    basisByTxn,
+    allSellGroups,
+    inRangeGroups,
+    sellGroupsMap,
+    analytics: {
+      totalClosedTrades,
+      winTrades,
+      winAmount,
+      lossTrades,
+      lossAmount,
+      beTrades,
+      netRealized,
+      winRatePct,
+      profitFactor,
+      avgWin,
+      avgLoss,
+      winLossRatio,
+      expectancy,
+      avgReturnPct,
+      totalVolume,
+      totalFees,
+      bestTrade,
+      worstTrade
+    }
+  };
+}
+
 function renderLedger(){
   const R = activeRange();
-  const txns = [...state.transactions]
-    .filter(t=>{ if(R.isAll) return true; const ts=new Date(t.date).getTime(); return ts>=R.startTs && ts<=R.endTs; })
-    .sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
-  // realized P/L per sell (chronological replay over ALL history for correct cost basis)
-  const realizedByTxn = (function(){
-    const chron=[...state.transactions].sort((a,b)=> (new Date(a.date)-new Date(b.date)) || ((a._seq||0)-(b._seq||0)));
-    const pos={}, m={};
-    for(const t of chron){
-      if(t.type==="BUY"){ const g=t.qty*t.price+(t.fee||0); const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); p.qty+=t.qty; p.costBasis+=g; }
-      else if(t.type==="SELL"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); const avg=p.qty>0?p.costBasis/p.qty:0; const basisSold=avg*t.qty; m[t.id]=(t.qty*t.price-(t.fee||0))-basisSold; p.qty-=t.qty; p.costBasis-=basisSold; if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
-      else if(t.type==="ADJUST" && t.target!=="cash"){ const p=pos[t.assetId]||(pos[t.assetId]={qty:0,costBasis:0}); if(t.qtyDelta>=0)p.qty+=t.qtyDelta; else { const rq=Math.min(-t.qtyDelta,p.qty); const avg=p.qty>0?p.costBasis/p.qty:0; p.qty-=rq; p.costBasis-=avg*rq;} if(p.qty<1e-9){p.qty=0;p.costBasis=0;} }
-    }
-    return m;
-  })();
-  const rows = txns.map(t=>{
-    let detail="", amount=0, showNote=false;
-    if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
-    else if(t.type==="ADJUST"){
-      showNote=true;
-      if(t.target==="cash"){ detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`; amount=t.delta; }
-      else{ const a=state.assets[t.assetId]||{symbol:t.assetId};
-        detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${esc((a.symbol||"").toUpperCase())} (holding adjustment)`; amount=null; }
-    }
-    else{
-      const a=state.assets[t.assetId]||{symbol:t.assetId};
-      const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
-      detail=`${fmtNum(t.qty)} ${esc((a.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
-      amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
-    }
-    const pl = (t.type==="SELL" && realizedByTxn[t.id]!=null) ? realizedByTxn[t.id] : null;
-    return `<tr>
-      <td><small class="muted">${new Date(t.date).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></td>
-      <td><span class="tag ${t.type}">${t.type}</span></td>
-      <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
-      <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
-      <td class="${pl==null?'muted':cls(pl)}">${pl==null?'—':arrow(pl)+fmtUSD(Math.abs(pl))}</td>
-      <td style="width:1px">
-        <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
-        <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
-      </td>
-    </tr>`;
-  }).join("");
+  const combineSells = state.ui.combineSells !== false;
+  state.ui.expandedGroups = state.ui.expandedGroups || {};
+
+  const { realizedByTxn, inRangeGroups, analytics } = computeClosedTradesAndAnalytics(state.transactions, R);
+  const a = analytics;
+  const hasTrades = a.totalClosedTrades > 0;
+  const winRateColor = !hasTrades ? 'neu' : (a.winRatePct >= 50 ? 'pos' : 'neg');
+  const netPnlColor = cls(a.netRealized);
+
+  const winBarPct = hasTrades ? (a.winTrades / a.totalClosedTrades * 100) : 0;
+  const lossBarPct = hasTrades ? (a.lossTrades / a.totalClosedTrades * 100) : 0;
+  const beBarPct = hasTrades ? (a.beTrades / a.totalClosedTrades * 100) : 0;
+
+  const profitFactorText = a.profitFactor === null ? '—' : (a.profitFactor === Infinity ? '∞' : a.profitFactor.toFixed(2));
+  const winLossRatioText = a.winLossRatio === null ? '—' : (a.winLossRatio === Infinity ? '∞' : a.winLossRatio.toFixed(2) + 'x');
+
+  let tableRows = "";
+  let totalRowsCount = 0;
+
+  const fmtDate = d => new Date(d).toLocaleString([], {year:'2-digit',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+
+  if(combineSells){
+    const nonSellItems = state.transactions.filter(t => {
+      if(t.type === "SELL") return false;
+      if(R.isAll) return true;
+      const ts = new Date(t.date).getTime();
+      return ts >= R.startTs && ts <= R.endTs;
+    }).map(t => ({ kind: "txn", date: t.date, seq: t._seq || 0, txn: t }));
+
+    const tradeItems = inRangeGroups.map(grp => ({
+      kind: "group",
+      date: grp.latestDate,
+      seq: grp.items[grp.items.length - 1].txn._seq || 0,
+      group: grp
+    }));
+
+    const displayItems = [...nonSellItems, ...tradeItems].sort((x, y) => {
+      const d = new Date(y.date) - new Date(x.date);
+      return d !== 0 ? d : y.seq - x.seq;
+    });
+
+    totalRowsCount = displayItems.length;
+
+    tableRows = displayItems.map(item => {
+      if(item.kind === "txn"){
+        const t = item.txn;
+        let detail="", amount=0, showNote=false;
+        if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
+        else if(t.type==="ADJUST"){
+          showNote=true;
+          if(t.target==="cash"){ detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`; amount=t.delta; }
+          else{ const ast=state.assets[t.assetId]||{symbol:t.assetId};
+            detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${esc((ast.symbol||"").toUpperCase())} (holding adjustment)`; amount=null; }
+        }
+        else if(t.type==="BUY"){
+          const ast=state.assets[t.assetId]||{symbol:t.assetId};
+          const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
+          detail=`${fmtNum(t.qty)} ${esc((ast.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+          amount = -(gross+fee);
+        }
+        return `<tr>
+          <td><small class="muted">${fmtDate(t.date)}</small></td>
+          <td><span class="tag ${t.type}">${t.type}</span></td>
+          <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
+          <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
+          <td class="muted">—</td>
+          <td style="width:1px">
+            <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
+            <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
+          </td>
+        </tr>`;
+      } else {
+        const grp = item.group;
+        const isExp = !!state.ui.expandedGroups[grp.id];
+        const ast = state.assets[grp.assetId] || { symbol: grp.symbol };
+        const sym = esc((ast.symbol || grp.symbol || "").toUpperCase());
+        const pl = grp.collectiveRealized;
+        const plPct = grp.collectiveReturnPct;
+
+        if(!grp.isCombined){
+          const it = grp.items[0];
+          const t = it.txn;
+          const fee = t.fee || 0;
+          const detail = `${fmtNum(t.qty)} ${sym} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+          const amount = it.cashImpact;
+          return `<tr>
+            <td><small class="muted">${fmtDate(t.date)}</small></td>
+            <td><span class="tag SELL">SELL</span></td>
+            <td style="text-align:left">${detail}${t.note?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
+            <td class="${cls(amount)}">${sign(amount)+fmtUSD(amount)}</td>
+            <td class="${cls(pl)}">${arrow(pl)+fmtUSD(Math.abs(pl))}${grp.totalCostBasis>0?` <small class="${cls(plPct)}">(${fmtPct(plPct)})</small>`:''}</td>
+            <td style="width:1px">
+              <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
+              <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
+            </td>
+          </tr>`;
+        } else {
+          const partsSummary = grp.items.map(it => `${fmtNum(it.qty)} @ ${fmtPrice(it.price)}`).join(" + ");
+          const parentRow = `<tr class="trade-group-row is-combined" data-group-id="${grp.id}" style="background:var(--hover)">
+            <td>
+              <small class="muted">${fmtDate(grp.latestDate)}</small>
+              ${grp.earliestDate !== grp.latestDate ? `<div class="muted" style="font-size:10px">started ${new Date(grp.earliestDate).toLocaleDateString([], {month:'short',day:'numeric'})}</div>` : ''}
+            </td>
+            <td>
+              <span class="tag SELL">SELL</span>
+              <span class="tag combined" style="font-size:9.5px;margin-left:2px">${grp.items.length} parts</span>
+            </td>
+            <td style="text-align:left">
+              <b>${fmtNum(grp.totalQty)}</b> ${sym} @ avg ${fmtPrice(grp.avgPrice)}${grp.totalFees ? ` · fee ${fmtUSD(grp.totalFees)}` : ''}
+              <div class="muted" style="font-size:11.5px;margin-top:2px">Collective sell in ${grp.items.length} parts: ${partsSummary}</div>
+            </td>
+            <td class="${cls(grp.totalCashImpact)}">${sign(grp.totalCashImpact)+fmtUSD(grp.totalCashImpact)}</td>
+            <td class="${cls(pl)}" style="font-weight:700">
+              ${arrow(pl)+fmtUSD(Math.abs(pl))}
+              <small class="${cls(plPct)}" style="font-weight:600">(${fmtPct(plPct)})</small>
+            </td>
+            <td style="width:1px;white-space:nowrap">
+              <button class="iconbtn" data-toggle-group="${grp.id}" title="${isExp ? 'Hide parts breakdown' : 'Show partial fills breakdown'}">${isExp ? '▲' : '▼'}</button>
+              <button class="iconbtn" data-del-group="${grp.id}" title="Delete all ${grp.items.length} partial transactions">🗑</button>
+            </td>
+          </tr>`;
+
+          let childRows = "";
+          if(isExp){
+            childRows = grp.items.map((it, idx) => {
+              const t = it.txn;
+              const itPl = it.realized;
+              const itRet = it.basisSold > 0 ? (itPl / it.basisSold * 100) : 0;
+              return `<tr class="trade-subrow">
+                <td style="padding-left:22px"><small class="muted">↳ ${fmtDate(it.date)}</small></td>
+                <td><span class="tag" style="font-size:9px;opacity:.85">fill ${idx+1}/${grp.items.length}</span></td>
+                <td style="text-align:left">
+                  ${fmtNum(it.qty)} ${sym} @ ${fmtPrice(it.price)}${it.fee ? ` · fee ${fmtUSD(it.fee)}` : ''}
+                  ${t.note ? ` <small class="muted">— ${esc(t.note)}</small>` : ''}
+                </td>
+                <td class="${cls(it.cashImpact)}">${sign(it.cashImpact)+fmtUSD(it.cashImpact)}</td>
+                <td class="${cls(itPl)}">${arrow(itPl)+fmtUSD(Math.abs(itPl))} <small class="${cls(itRet)}">(${fmtPct(itRet)})</small></td>
+                <td style="width:1px">
+                  <button class="iconbtn" data-edit="${t.id}" title="Edit this partial fill">✎</button>
+                  <button class="iconbtn" data-del="${t.id}" title="Delete this partial fill">🗑</button>
+                </td>
+              </tr>`;
+            }).join("");
+          }
+          return parentRow + childRows;
+        }
+      }
+    }).join("");
+  } else {
+    const txns = [...state.transactions]
+      .filter(t => { if(R.isAll) return true; const ts=new Date(t.date).getTime(); return ts>=R.startTs && ts<=R.endTs; })
+      .sort((a,b)=> new Date(b.date)-new Date(a.date) || (b._seq||0)-(a._seq||0));
+    totalRowsCount = txns.length;
+    tableRows = txns.map(t => {
+      let detail="", amount=0, showNote=false;
+      if(t.type==="DEPOSIT"||t.type==="WITHDRAW"){ detail=t.note?esc(t.note):"Cash "+t.type.toLowerCase(); amount=t.amount*(t.type==="DEPOSIT"?1:-1); }
+      else if(t.type==="ADJUST"){
+        showNote=true;
+        if(t.target==="cash"){ detail=`Cash adjustment (${t.delta>=0?"added":"removed"})`; amount=t.delta; }
+        else{ const ast=state.assets[t.assetId]||{symbol:t.assetId};
+          detail=`${t.qtyDelta>=0?"+":"−"}${fmtNum(Math.abs(t.qtyDelta))} ${esc((ast.symbol||"").toUpperCase())} (holding adjustment)`; amount=null; }
+      }
+      else{
+        const ast=state.assets[t.assetId]||{symbol:t.assetId};
+        const gross=t.qty*t.price, fee=t.fee||0; showNote=true;
+        detail=`${fmtNum(t.qty)} ${esc((ast.symbol||"").toUpperCase())} @ ${fmtPrice(t.price)}${fee?` · fee ${fmtUSD(fee)}`:''}`;
+        amount = t.type==="BUY" ? -(gross+fee) : (gross-fee);
+      }
+      const pl = (t.type==="SELL" && realizedByTxn[t.id]!=null) ? realizedByTxn[t.id] : null;
+      return `<tr>
+        <td><small class="muted">${fmtDate(t.date)}</small></td>
+        <td><span class="tag ${t.type}">${t.type}</span></td>
+        <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
+        <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
+        <td class="${pl==null?'muted':cls(pl)}">${pl==null?'—':arrow(pl)+fmtUSD(Math.abs(pl))}</td>
+        <td style="width:1px">
+          <button class="iconbtn" data-edit="${t.id}" title="Edit">✎</button>
+          <button class="iconbtn" data-del="${t.id}" title="Delete">🗑</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
   viewEl.innerHTML = `
+    ${rangeBarHTML()}
+    <div class="panel analytics-panel">
+      <h2>Trade Analytics ${R.isAll ? "" : `<span class="tag" style="font-size:9.5px">${R.label}</span>`}
+        <span class="spacer"></span>
+        <span class="muted" style="font-size:12px;font-weight:400">
+          ${hasTrades ? `${a.totalClosedTrades} closed trade${a.totalClosedTrades===1?'':'s'} evaluated` : 'No closed trades in this period'}
+        </span>
+      </h2>
+
+      <div class="analytics-hero">
+        <div>
+          <div class="label">Winning Percentage (Win Rate)</div>
+          <div class="flex" style="align-items:baseline;gap:8px">
+            <span class="big ${winRateColor}">${hasTrades ? a.winRatePct.toFixed(1) + '%' : '—'}</span>
+            <span class="tag ${winRateColor}" style="font-size:11px;font-weight:700">
+              ${hasTrades ? `${a.winTrades}W · ${a.lossTrades}L${a.beTrades ? ` · ${a.beTrades}BE` : ''}` : 'No closed trades'}
+            </span>
+          </div>
+          <div class="win-loss-bar" title="Wins: ${a.winTrades} (${winBarPct.toFixed(1)}%) | Losses: ${a.lossTrades} (${lossBarPct.toFixed(1)}%) | Breakeven: ${a.beTrades} (${beBarPct.toFixed(1)}%)">
+            <div class="win-seg" style="width:${winBarPct}%"></div>
+            <div class="loss-seg" style="width:${lossBarPct}%"></div>
+            <div class="be-seg" style="width:${beBarPct}%"></div>
+          </div>
+          <div class="muted" style="font-size:11.5px;margin-top:4px">
+            ${hasTrades ? `${winBarPct.toFixed(0)}% wins · ${lossBarPct.toFixed(0)}% losses${a.beTrades ? ` · ${beBarPct.toFixed(0)}% breakeven` : ''}` : 'Closed trade outcomes will appear here'}
+          </div>
+        </div>
+
+        <div>
+          <div class="label">Net Realized P&L</div>
+          <div class="value ${netPnlColor}">${hasTrades ? arrow(a.netRealized) + fmtUSD(Math.abs(a.netRealized)) : '$0.00'}</div>
+          <div class="sub muted">${hasTrades ? `${fmtPct(a.avgReturnPct)} avg return per trade` : 'from closed positions'}</div>
+          ${hasTrades ? secLine(a.netRealized, true) : ''}
+        </div>
+
+        <div>
+          <div class="label">Profit Factor & Expectancy</div>
+          <div class="value" style="font-family:var(--mono)">${profitFactorText}</div>
+          <div class="sub ${cls(a.expectancy)}">
+            ${hasTrades ? `${arrow(a.expectancy)}${fmtUSD(Math.abs(a.expectancy))} / trade` : 'expectancy'}
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Ratio of gross gains to gross losses</div>
+        </div>
+      </div>
+
+      <div class="grid cards" style="padding:14px 18px">
+        <div class="card">
+          <div class="label">Winning Trades</div>
+          <div class="value pos">${a.winTrades} <small class="muted" style="font-size:13px">trade${a.winTrades===1?'':'s'}</small></div>
+          <div class="sub pos" style="font-weight:600">+${fmtUSD(a.winAmount)} total won</div>
+          ${a.winAmount > 0 ? secLine(a.winAmount, true) : ''}
+        </div>
+
+        <div class="card">
+          <div class="label">Losing Trades</div>
+          <div class="value neg">${a.lossTrades} <small class="muted" style="font-size:13px">trade${a.lossTrades===1?'':'s'}</small></div>
+          <div class="sub neg" style="font-weight:600">-${fmtUSD(a.lossAmount)} total lost</div>
+          ${a.lossAmount > 0 ? secLine(-a.lossAmount, true) : ''}
+        </div>
+
+        <div class="card">
+          <div class="label">Avg Win vs Avg Loss</div>
+          <div class="value" style="font-size:19px">
+            <span class="pos">+${fmtUSD(a.avgWin)}</span>
+            <span class="muted" style="font-size:14px"> / </span>
+            <span class="neg">-${fmtUSD(a.avgLoss)}</span>
+          </div>
+          <div class="sub muted">Win/Loss payout ratio: <b>${winLossRatioText}</b></div>
+        </div>
+
+        <div class="card">
+          <div class="label">Best & Worst Trades</div>
+          <div class="value" style="font-size:18px">
+            ${a.bestTrade ? `<span class="pos">+${fmtUSD(a.bestTrade.collectiveRealized)}</span> <small class="muted" style="font-size:11.5px">(${esc((a.bestTrade.symbol||'').toUpperCase())})</small>` : '<span class="muted">—</span>'}
+          </div>
+          <div class="sub ${a.worstTrade ? 'neg' : 'muted'}">
+            ${a.worstTrade ? `Worst: -${fmtUSD(Math.abs(a.worstTrade.collectiveRealized))} (${esc((a.worstTrade.symbol||'').toUpperCase())})` : 'No losing trades'}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="label">Trade Volume & Fees</div>
+          <div class="value">${fmtUSD(a.totalVolume)}</div>
+          <div class="sub muted">Fees paid: <b>${fmtUSD(a.totalFees)}</b> · Breakeven: <b>${a.beTrades}</b></div>
+        </div>
+
+        <div class="card">
+          <div class="label">Trade Expectancy</div>
+          <div class="value ${cls(a.expectancy)}">${arrow(a.expectancy)}${fmtUSD(Math.abs(a.expectancy))}</div>
+          <div class="sub muted">average profit per trade entered</div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel">
-      <h2>Transaction ledger ${R.isAll?"":`<span class="tag" style="font-size:9.5px">${R.label}</span>`}<span class="spacer"></span>
+      <h2>Transaction ledger ${R.isAll ? "" : `<span class="tag" style="font-size:9.5px">${R.label}</span>`}<span class="spacer"></span>
+        <button class="btn sm ${combineSells ? 'primary' : ''}" id="toggleCombineBtn" title="Combine successive partial sells for the same asset">${combineSells ? '✓ Combine partial sells' : 'Combine partial sells'}</button>
         <button class="btn sm" id="exportBtn">⭳ Export JSON</button>
         <button class="btn sm" id="importBtn">⭱ Import JSON</button>
         <button class="btn sm primary" id="addBtn2">+ Add</button>
       </h2>
-      ${txns.length? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th>Realized P/L</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-        : emptyBlock("🧾", R.isAll?"No transactions yet":"No transactions in this range", R.isAll?"Start by adding a Deposit for your initial capital.":"Change the date range on the Dashboard, or pick All.")}
+      ${totalRowsCount ? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:left">Details</th><th>Cash impact</th><th>Realized P/L</th><th></th></tr></thead><tbody>${tableRows}</tbody></table>`
+        : emptyBlock("🧾", R.isAll ? "No transactions yet" : "No transactions in this range", R.isAll ? "Start by adding a Deposit for your initial capital." : "Change the date range on the Dashboard, or pick All.")}
     </div>`;
+
+  wireRangeBar();
 }
 
 function renderSettings(){
@@ -3144,6 +3577,47 @@ function openHoldingTxn(assetId, type, closeAll){
 
 // event delegation for ledger + dynamically-rendered buttons
 viewEl.addEventListener("click",e=>{
+  const tg = e.target.closest("[data-toggle-group]");
+  if(tg){
+    const gid = tg.dataset.toggleGroup;
+    state.ui.expandedGroups = state.ui.expandedGroups || {};
+    state.ui.expandedGroups[gid] = !state.ui.expandedGroups[gid];
+    renderLedger();
+    return;
+  }
+  const delGrp = e.target.closest("[data-del-group]");
+  if(delGrp){
+    const gid = delGrp.dataset.delGroup;
+    const { sellGroupsMap } = computeClosedTradesAndAnalytics(state.transactions);
+    const g = sellGroupsMap && sellGroupsMap[gid];
+    if(g && confirm(`Delete all ${g.items.length} partial transactions in this combined trade?`)){
+      const idSet = new Set(g.items.map(it => it.txn.id));
+      state.transactions = state.transactions.filter(x => !idSet.has(x.id));
+      save();
+      render();
+      toast(`Deleted ${idSet.size} transactions`);
+    }
+    return;
+  }
+  const cbBtn = e.target.closest("#toggleCombineBtn");
+  if(cbBtn){
+    state.ui.combineSells = state.ui.combineSells === false ? true : false;
+    persistLocal();
+    renderLedger();
+    toast(state.ui.combineSells ? "Combining successive partial sells" : "Showing all individual transactions");
+    return;
+  }
+  const rowGrp = e.target.closest(".trade-group-row.is-combined");
+  if(rowGrp && !e.target.closest("button")){
+    const gid = rowGrp.dataset.groupId;
+    if(gid){
+      state.ui.expandedGroups = state.ui.expandedGroups || {};
+      state.ui.expandedGroups[gid] = !state.ui.expandedGroups[gid];
+      renderLedger();
+      return;
+    }
+  }
+
   const ed=e.target.closest("[data-edit]"); const del=e.target.closest("[data-del]");
   const buy=e.target.closest("[data-buy]"), sell=e.target.closest("[data-sell]"), close=e.target.closest("[data-close]");
   if(buy){ openHoldingTxn(buy.dataset.buy,"BUY",false); return; }
