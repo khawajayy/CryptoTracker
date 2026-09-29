@@ -111,7 +111,7 @@ The transaction dialog shows the relevant balances for what you're doing: **avai
 
 ## Live prices
 
-- **Crypto** — CoinGecko, free, no key. Search picks the right coin.
+- **Crypto & bStocks** — Binance (keyless, real-time prices for cryptocurrencies and tokenized bStocks) with CoinGecko fallback.
 - **Stocks** — Finnhub. Paste a free key in **Settings** (get one at https://finnhub.io/register). Without a key, stock live prices are skipped (everything else still works, and you can enter prices manually).
 - Manual **Refresh** button + optional auto-refresh in Settings. Last-known prices are cached.
 

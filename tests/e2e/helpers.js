@@ -24,6 +24,13 @@ async function mockNetwork(page) {
       body: JSON.stringify({ coins: [] }),
     })
   );
+  await page.route("**://api.binance.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    })
+  );
   await page.route("**://finnhub.io/**", (route) =>
     route.fulfill({
       status: 200,
