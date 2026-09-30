@@ -220,11 +220,47 @@
     };
   }
 
+  /**
+   * Calculates estimated time to reach a goal given trade count and average days per trade.
+   * @param {number} totalTrades - number of winning trades needed
+   * @param {number} daysPerTrade - average duration per profitable trade in days
+   * @returns {{ totalDays: number, formatted: string }}
+   */
+  function estimateTimeToGoal(totalTrades, daysPerTrade) {
+    if (!Number.isFinite(totalTrades) || totalTrades <= 0 || !Number.isFinite(daysPerTrade) || daysPerTrade <= 0) {
+      return { totalDays: 0, formatted: '—' };
+    }
+    const rawDays = totalTrades * daysPerTrade;
+    const totalDays = rawDays < 1 ? Math.round(rawDays * 100) / 100 : Math.round(rawDays * 10) / 10;
+    let formatted;
+    if (rawDays < 1 / 24) {
+      const mins = Math.max(1, Math.round(rawDays * 24 * 60));
+      formatted = `≈ ${mins} min${mins === 1 ? '' : 's'}`;
+    } else if (rawDays < 1) {
+      const hrs = Math.round(rawDays * 24 * 10) / 10;
+      formatted = `≈ ${hrs} hr${hrs === 1 ? '' : 's'}`;
+    } else if (rawDays < 14) {
+      const d = totalDays.toFixed(1).replace(/\.0$/, '');
+      formatted = `≈ ${d} day${totalDays === 1 ? '' : 's'}`;
+    } else if (rawDays < 60) {
+      const wks = (rawDays / 7).toFixed(1);
+      formatted = `≈ ${Math.round(rawDays)} days (≈ ${wks} wks)`;
+    } else if (rawDays < 365) {
+      const mos = (rawDays / 30.4375).toFixed(1);
+      formatted = `≈ ${Math.round(rawDays)} days (≈ ${mos} mo)`;
+    } else {
+      const yrs = (rawDays / 365.25).toFixed(1);
+      formatted = `≈ ${yrs} yrs (${Math.round(rawDays)} days)`;
+    }
+    return { totalDays, formatted };
+  }
+
   return {
     roundCurrency,
     tradesToGoal,
     validateStepUpGoal,
     calculateStepUpGoal,
+    estimateTimeToGoal,
     MAX_TRADES
   };
 });

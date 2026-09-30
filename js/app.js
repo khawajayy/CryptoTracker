@@ -308,6 +308,53 @@ function render(){
 
 // number of compounding X%-profit trades to grow `from` up to `to`
 const tradesToGoal = GoalCalc.tradesToGoal;
+const estimateTimeToGoal = GoalCalc.estimateTimeToGoal;
+
+function formatDurationDays(days){
+  if(days == null || !Number.isFinite(days) || days < 0) return '—';
+  if(days < 1 / 24){
+    const mins = Math.max(1, Math.round(days * 24 * 60));
+    return `${mins}m`;
+  }
+  if(days < 1){
+    const hrs = Math.round(days * 24 * 10) / 10;
+    return `${hrs}h`;
+  }
+  if(days < 14){
+    const d = Math.round(days * 10) / 10;
+    return `${d}d`;
+  }
+  if(days < 60){
+    const d = Math.round(days);
+    const wks = (days / 7).toFixed(1);
+    return `${d}d (${wks}w)`;
+  }
+  if(days < 365){
+    const d = Math.round(days);
+    const mo = (days / 30.4375).toFixed(1);
+    return `${d}d (${mo}mo)`;
+  }
+  const yr = (days / 365.25).toFixed(1);
+  return `${yr}y`;
+}
+
+function getLedgerProfitableTradeStats(){
+  try {
+    const res = LE.computeClosedTradesAndAnalytics(state.transactions, { isAll: true }, state.assets);
+    const days = res && res.analytics && res.analytics.avgHoldingTimeProfitableDays;
+    const wins = (res && res.analytics && res.analytics.winTrades) || 0;
+    if(days != null && Number.isFinite(days) && days > 0){
+      return { days: Math.round(days * 10) / 10, hasWins: true, count: wins };
+    }
+  } catch(e) {
+    console.warn("Could not compute ledger average trade days", e);
+  }
+  return { days: 7, hasWins: false, count: 0 };
+}
+
+function getLedgerAvgProfitableTradeDays(){
+  return getLedgerProfitableTradeStats().days;
+}
 
 // progress-ring SVG at a given size
 function ringSVG(progress, reached, size, stroke){
@@ -331,6 +378,13 @@ function stepUpGoalCardHTML(g, equity){
   const progress = Math.max(0, Math.min(100, (equity / overallTarget) * 100));
   const reached = equity >= overallTarget - EPS;
   const gainNeededPct = equity > 0 ? (overallTarget / equity - 1) * 100 : null;
+
+  const stats = getLedgerProfitableTradeStats();
+  const ledgerDays = stats.days;
+  const isCustomDays = g.tradeDays != null && Number.isFinite(g.tradeDays) && g.tradeDays > 0 && Math.abs(g.tradeDays - ledgerDays) > 0.001;
+  const tradeDays = isCustomDays ? g.tradeDays : ledgerDays;
+  const estTime = (!reached && calc.totalTrades > 0) ? estimateTimeToGoal(calc.totalTrades, tradeDays) : null;
+  const estTotalDays = estTime ? estTime.totalDays : null;
 
   return `<div class="card">
     <div class="flex" style="justify-content:space-between;gap:8px;align-items:flex-start">
@@ -363,6 +417,31 @@ function stepUpGoalCardHTML(g, equity){
 
     <div class="goalstat"><span class="k">Starting balance</span><span class="v">${fmtUSD(calc.initialStartingBalance)}</span></div>
     <div class="goalstat"><span class="k">Total winning trades required</span><span class="v bignum" style="font-size:20px">${calc.totalTrades}</span></div>
+    ${!reached && calc.totalTrades > 0 ? `
+      <div class="goalstat">
+        <span class="k" title="Average duration per profitable trade (manually adjustable, defaults to ledger)">Avg time / profitable trade</span>
+        <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
+          <input type="number" data-goaltradedays="${esc(g.id)}" value="${tradeDays}" step="any" min="0.01"
+            title="Average days per profitable trade (manually adjustable, defaults to ledger)"
+            style="width:58px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px">
+          <span class="muted" style="font-size:12px">d</span>
+          ${isCustomDays ? `<button class="iconbtn" data-goalresetdays="${esc(g.id)}" title="Reset to ledger average (${ledgerDays}d)" style="font-size:11px;padding:2px 4px;color:var(--accent)">↺</button>` : ''}
+        </span>
+      </div>
+      <div class="goalstat">
+        <span class="k">Avg estimated time to reach goal</span>
+        <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
+          <input type="number" data-goalestdays="${esc(g.id)}" value="${estTotalDays != null ? estTotalDays : ''}" step="any" min="0.1"
+            title="Estimated total days to reach goal (manually adjustable)"
+            style="width:64px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px;font-weight:700">
+          <span class="muted" style="font-size:12px">d</span>
+        </span>
+      </div>
+      <div class="muted" style="font-size:11px;text-align:right;margin-top:-2px" data-estbadge="${esc(g.id)}">
+        <span style="color:var(--accent);font-weight:600">${estTime ? estTime.formatted : '—'}</span>
+        · ${isCustomDays ? '✏️ manually adjusted' : `⚡ defaulted from ledger (${ledgerDays}d/trade)`}
+      </div>
+    ` : ''}
     <div class="goalstat"><span class="k">Final ending balance</span>
       <span class="v pos">${fmtUSD(calc.finalBalance)}${fmtSec(calc.finalBalance) ? `<small>${fmtSec(calc.finalBalance)}</small>` : ''}</span>
     </div>
@@ -380,7 +459,7 @@ function stepUpGoalCardHTML(g, equity){
             <span class="tag">${st.profitPct}% / trade</span>
           </div>
           <div class="st-prog">${fmtUSD(st.startingBalance)} → <b>${fmtUSD(st.endingBalance)}</b></div>
-          <div class="st-sub">${st.tradesCount} ${st.tradesCount === 1 ? 'trade' : 'trades'} · Target: ${fmtUSD(st.targetAmount)} · Profit: +${fmtUSD(st.profitGenerated)}</div>
+          <div class="st-sub">${st.tradesCount} ${st.tradesCount === 1 ? 'trade' : 'trades'} · Target: ${fmtUSD(st.targetAmount)} · Profit: +${fmtUSD(st.profitGenerated)}${!reached ? ` · Est: ≈ ${Math.round(st.tradesCount * tradeDays * 10) / 10}d` : ''}</div>
         </div>
       `).join('')}
       <div class="step-arrow">↓</div>
@@ -389,7 +468,7 @@ function stepUpGoalCardHTML(g, equity){
           <span style="color:var(--accent);font-weight:700">🎯 Goal Complete</span>
           <span class="pos font-bold">${fmtUSD(calc.finalBalance)}</span>
         </div>
-        <div class="st-sub">${calc.totalTrades} total trades · Total profit: +${fmtUSD(calc.totalProfit)}</div>
+        <div class="st-sub">${calc.totalTrades} total trades${estTime ? ` (${estTime.formatted})` : ''} · Total profit: +${fmtUSD(calc.totalProfit)}</div>
       </div>
     </div>
 
@@ -454,6 +533,14 @@ function goalCardHTML(g, equity){
   const gainNeededPct=equity>0 ? (target/equity-1)*100 : null;
   const nTrades=tradesToGoal(equity, target, pct);
   const endAmount = nTrades!=null ? equity*Math.pow(1+pct/100, nTrades) : null;   // where you actually land
+
+  const stats = getLedgerProfitableTradeStats();
+  const ledgerDays = stats.days;
+  const isCustomDays = g.tradeDays != null && Number.isFinite(g.tradeDays) && g.tradeDays > 0 && Math.abs(g.tradeDays - ledgerDays) > 0.001;
+  const tradeDays = isCustomDays ? g.tradeDays : ledgerDays;
+  const estTime = (nTrades != null && nTrades > 0) ? estimateTimeToGoal(nTrades, tradeDays) : null;
+  const estTotalDays = estTime ? estTime.totalDays : null;
+
   return `<div class="card">
     <div class="flex" style="justify-content:space-between;gap:8px">
       <b style="font-size:16px">${esc(g.name||"Goal")}</b>
@@ -481,7 +568,31 @@ function goalCardHTML(g, equity){
         <div class="muted" style="font-size:12px;margin-top:6px">compounding ${pct}% each, reinvested, to reach ${fmtUSD(target)}</div>
       </div>
       <div class="goalstat" style="margin-top:10px"><span class="k">You'd end at (after ${nTrades} ${nTrades===1?'trade':'trades'})</span>
-        <span class="v pos">${endAmount!=null?fmtUSD(endAmount):'—'}${endAmount!=null&&fmtSec(endAmount)?`<small>${fmtSec(endAmount)}</small>`:''}</span></div>` : ``}
+        <span class="v pos">${endAmount!=null?fmtUSD(endAmount):'—'}${endAmount!=null&&fmtSec(endAmount)?`<small>${fmtSec(endAmount)}</small>`:''}</span>
+      </div>
+      <div class="goalstat">
+        <span class="k" title="Average duration per profitable trade (manually adjustable, defaults to ledger)">Avg time / profitable trade</span>
+        <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
+          <input type="number" data-goaltradedays="${esc(g.id)}" value="${tradeDays}" step="any" min="0.01"
+            title="Average days per profitable trade (manually adjustable, defaults to ledger)"
+            style="width:58px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px">
+          <span class="muted" style="font-size:12px">d</span>
+          ${isCustomDays ? `<button class="iconbtn" data-goalresetdays="${esc(g.id)}" title="Reset to ledger average (${ledgerDays}d)" style="font-size:11px;padding:2px 4px;color:var(--accent)">↺</button>` : ''}
+        </span>
+      </div>
+      <div class="goalstat">
+        <span class="k">Avg estimated time to reach goal</span>
+        <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
+          <input type="number" data-goalestdays="${esc(g.id)}" value="${estTotalDays != null ? estTotalDays : ''}" step="any" min="0.1"
+            title="Estimated total days to reach goal (manually adjustable)"
+            style="width:64px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px;font-weight:700">
+          <span class="muted" style="font-size:12px">d</span>
+        </span>
+      </div>
+      <div class="muted" style="font-size:11px;text-align:right;margin-top:-2px" data-estbadge="${esc(g.id)}">
+        <span style="color:var(--accent);font-weight:600">${estTime ? estTime.formatted : '—'}</span>
+        · ${isCustomDays ? '✏️ manually adjusted' : `⚡ defaulted from ledger (${ledgerDays}d/trade)`}
+      </div>` : ``}
   </div>`;
 }
 
@@ -495,6 +606,11 @@ function syncGoalEditForm(){
   if(pctEl) goalEditState.profitPct = parseFloat(pctEl.value) || 10;
   const startEl = document.getElementById("gfStartAmount");
   if(startEl) goalEditState.startAmount = stripNum(startEl.value);
+  const tdEl = document.getElementById("gfTradeDays");
+  if(tdEl){
+    const v = parseFloat(tdEl.value);
+    goalEditState.tradeDays = Number.isFinite(v) && v > 0 ? v : null;
+  }
 
   const stepRows = document.querySelectorAll(".step-card");
   stepRows.forEach(row => {
@@ -512,6 +628,7 @@ function renderGoal(){
   const p = computePortfolio();
   const equity = p.equity;
   const goals = state.goals || [];
+  const ledgerDays = getLedgerAvgProfitableTradeDays();
 
   let html = `<div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
     <div style="font-family:var(--serif);font-size:21px;font-weight:700">🎯 Goals</div>
@@ -527,6 +644,7 @@ function renderGoal(){
           name: "",
           target: "",
           profitPct: 10,
+          tradeDays: null,
           startAmount: defStart,
           steps: [
             { target: Math.round(defStart * 1.5), profitPct: 20 },
@@ -543,6 +661,7 @@ function renderGoal(){
           name: existing ? (existing.name || "") : "",
           target: existing ? (existing.target || "") : "",
           profitPct: existing ? (existing.profitPct || 10) : 10,
+          tradeDays: existing && existing.tradeDays != null ? existing.tradeDays : null,
           startAmount: startAmt,
           steps: existing && Array.isArray(existing.steps) && existing.steps.length
             ? JSON.parse(JSON.stringify(existing.steps))
@@ -580,12 +699,33 @@ function renderGoal(){
             <label>Expected profit per winning trade (%)</label>
             <input id="gfPct" type="number" step="any" min="0.01" value="${goalEditState.profitPct || 10}">
           </div>
+          <div class="field">
+            <label>Avg time per profitable trade (days)</label>
+            <div class="flex" style="gap:8px">
+              <input id="gfTradeDays" type="number" step="any" min="0.01" value="${goalEditState.tradeDays != null ? goalEditState.tradeDays : ''}" placeholder="${ledgerDays} (from ledger)" style="flex:1">
+              <button type="button" class="btn sm" id="gfUseLedgerDays" title="Use current average from ledger (${ledgerDays} days)">Use ledger avg (${ledgerDays}d)</button>
+            </div>
+            <div class="muted" style="font-size:11.5px;margin-top:4px">
+              Takes default value (${ledgerDays} days) from the average time per profitable trade in your ledger. Leave blank to auto-sync with ledger.
+            </div>
+          </div>
         ` : `
           <div class="field">
             <label>Starting balance (USD)</label>
             <div class="flex" style="gap:8px">
               <input id="gfStartAmount" type="text" inputmode="decimal" class="amt" value="${goalEditState.startAmount ? fmtAmtStr(goalEditState.startAmount) : ""}" placeholder="e.g. 10,000" autocomplete="off" style="flex:1">
               <button type="button" class="btn sm" id="gfUseEquity" title="Set starting balance to current equity">Use equity (${fmtUSD(equity)})</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Avg time per profitable trade (days)</label>
+            <div class="flex" style="gap:8px">
+              <input id="gfTradeDays" type="number" step="any" min="0.01" value="${goalEditState.tradeDays != null ? goalEditState.tradeDays : ''}" placeholder="${ledgerDays} (from ledger)" style="flex:1">
+              <button type="button" class="btn sm" id="gfUseLedgerDays" title="Use current average from ledger (${ledgerDays} days)">Use ledger avg (${ledgerDays}d)</button>
+            </div>
+            <div class="muted" style="font-size:11.5px;margin-top:4px">
+              Takes default value (${ledgerDays} days) from the average time per profitable trade in your ledger. Leave blank to auto-sync with ledger.
             </div>
           </div>
 
@@ -672,6 +812,16 @@ function renderGoal(){
     };
   }
 
+  const useLedgerBtn = document.getElementById("gfUseLedgerDays");
+  if(useLedgerBtn){
+    useLedgerBtn.onclick = () => {
+      const tdInp = document.getElementById("gfTradeDays");
+      if(tdInp){
+        tdInp.value = getLedgerAvgProfitableTradeDays();
+      }
+    };
+  }
+
   const addStepBtn = document.getElementById("gfAddStep");
   if(addStepBtn){
     addStepBtn.onclick = () => {
@@ -707,6 +857,7 @@ function renderGoal(){
       syncGoalEditForm();
       const name = (goalEditState.name || "").trim();
       const isStepUp = goalEditState.type === "stepup";
+      const tradeDays = goalEditState.tradeDays;
 
       if(!isStepUp){
         const target = Number(goalEditState.target);
@@ -715,10 +866,10 @@ function renderGoal(){
         if(!(pct > 0)){ toast("Enter a positive profit percentage", true); return; }
 
         if(goalEditing === "new"){
-          state.goals.push({ id: uid(), name: name || "Goal", type: "fixed", target, profitPct: pct });
+          state.goals.push({ id: uid(), name: name || "Goal", type: "fixed", target, profitPct: pct, tradeDays });
         } else {
           const g = state.goals.find(x => x.id === goalEditing);
-          if(g){ g.name = name || "Goal"; g.type = "fixed"; g.target = target; g.profitPct = pct; }
+          if(g){ g.name = name || "Goal"; g.type = "fixed"; g.target = target; g.profitPct = pct; g.tradeDays = tradeDays; }
         }
       } else {
         const startAmount = Number(goalEditState.startAmount);
@@ -744,7 +895,8 @@ function renderGoal(){
             startAmount,
             target: finalTarget,
             profitPct: firstPct,
-            steps
+            steps,
+            tradeDays
           });
         } else {
           const g = state.goals.find(x => x.id === goalEditing);
@@ -755,6 +907,7 @@ function renderGoal(){
             g.target = finalTarget;
             g.profitPct = firstPct;
             g.steps = steps;
+            g.tradeDays = tradeDays;
           }
         }
       }
@@ -791,12 +944,90 @@ function renderGoal(){
         g.profitPct = v;
         save();
         renderGoal();
-        const again = viewEl.querySelector(`[data-goalpct="${CSS.escape(g.id)}"]`);
+        const escId = window.CSS && CSS.escape ? CSS.escape(g.id) : g.id;
+        const again = viewEl.querySelector(`[data-goalpct="${escId}"]`);
         if(again){
           again.focus();
           again.setSelectionRange(again.value.length, again.value.length);
         }
       }
+    }
+  }));
+
+  viewEl.querySelectorAll("[data-goaltradedays]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const v = parseFloat(inp.value);
+      const g = state.goals.find(x => x.id === inp.dataset.goaltradedays);
+      if(g){
+        if(v > 0){
+          g.tradeDays = v;
+        }
+        save();
+        renderGoal();
+        const escId = window.CSS && CSS.escape ? CSS.escape(g.id) : g.id;
+        const again = viewEl.querySelector(`[data-goaltradedays="${escId}"]`);
+        if(again){
+          again.focus();
+          again.setSelectionRange(again.value.length, again.value.length);
+        }
+      }
+    });
+    inp.addEventListener("change", () => {
+      if(inp.value.trim() === ""){
+        const g = state.goals.find(x => x.id === inp.dataset.goaltradedays);
+        if(g){
+          g.tradeDays = null;
+          save();
+          renderGoal();
+        }
+      }
+    });
+  });
+
+  viewEl.querySelectorAll("[data-goalestdays]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const v = parseFloat(inp.value);
+      const g = state.goals.find(x => x.id === inp.dataset.goalestdays);
+      if(g && v > 0){
+        let totalTrades;
+        if(g.type === "stepup"){
+          const steps = Array.isArray(g.steps) && g.steps.length ? g.steps : [{ target: g.target || 15000, profitPct: g.profitPct || 10 }];
+          const startAmount = g.startAmount > 0 ? g.startAmount : (equity > 0 ? equity : 10000);
+          const calc = GoalCalc.calculateStepUpGoal({ startAmount, steps });
+          totalTrades = calc.totalTrades;
+        } else {
+          totalTrades = tradesToGoal(equity, g.target, g.profitPct || 10) || 1;
+        }
+        g.tradeDays = totalTrades > 0 ? Math.round((v / totalTrades) * 100) / 100 : v;
+        save();
+        renderGoal();
+        const escId = window.CSS && CSS.escape ? CSS.escape(g.id) : g.id;
+        const again = viewEl.querySelector(`[data-goalestdays="${escId}"]`);
+        if(again){
+          again.focus();
+          again.setSelectionRange(again.value.length, again.value.length);
+        }
+      }
+    });
+    inp.addEventListener("change", () => {
+      if(inp.value.trim() === ""){
+        const g = state.goals.find(x => x.id === inp.dataset.goalestdays);
+        if(g){
+          g.tradeDays = null;
+          save();
+          renderGoal();
+        }
+      }
+    });
+  });
+
+  viewEl.querySelectorAll("[data-goalresetdays]").forEach(b => b.addEventListener("click", () => {
+    const g = state.goals.find(x => x.id === b.dataset.goalresetdays);
+    if(g){
+      g.tradeDays = null;
+      save();
+      renderGoal();
+      toast("Reset trade time to ledger default");
     }
   }));
 
@@ -1881,7 +2112,7 @@ function renderLedger(){
           const amount = it.cashImpact;
           return `<tr>
             <td><small class="muted">${fmtDate(t.date)}</small></td>
-            <td><span class="tag SELL">SELL</span></td>
+            <td><span class="tag SELL">SELL</span>${grp.holdingTimeDays > 0 ? `<span class="tag" style="font-size:9.5px;margin-left:2px" title="Holding duration">⏱ ${formatDurationDays(grp.holdingTimeDays)}</span>` : ''}</td>
             <td style="text-align:left">${detail}${t.note?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
             <td class="${cls(amount)}">${sign(amount)+fmtUSD(amount)}</td>
             <td class="${cls(pl)}">${arrow(pl)+fmtUSD(Math.abs(pl))}${grp.totalCostBasis>0?` <small class="${cls(plPct)}">(${fmtPct(plPct)})</small>`:''}</td>
@@ -1900,6 +2131,7 @@ function renderLedger(){
             <td>
               <span class="tag SELL">SELL</span>
               <span class="tag combined" style="font-size:9.5px;margin-left:2px">${grp.items.length} parts</span>
+              ${grp.holdingTimeDays > 0 ? `<span class="tag" style="font-size:9.5px;margin-left:2px" title="Avg holding duration">⏱ ${formatDurationDays(grp.holdingTimeDays)}</span>` : ''}
             </td>
             <td style="text-align:left">
               <b>${fmtNum(grp.totalQty)}</b> ${sym} @ avg ${fmtPrice(grp.avgPrice)}${grp.totalFees ? ` · fee ${fmtUSD(grp.totalFees)}` : ''}
@@ -2067,6 +2299,12 @@ function renderLedger(){
           <div class="label">Trade Expectancy</div>
           <div class="value ${cls(a.expectancy)}">${arrow(a.expectancy)}${fmtUSD(Math.abs(a.expectancy))}</div>
           <div class="sub muted">average profit per trade entered</div>
+        </div>
+
+        <div class="card">
+          <div class="label">Avg Time / Profitable Trade</div>
+          <div class="value" style="font-size:18px">${a.avgHoldingTimeProfitableDays != null ? formatDurationDays(a.avgHoldingTimeProfitableDays) : '—'}</div>
+          <div class="sub muted">${a.winTrades > 0 ? `avg duration across ${a.winTrades} win${a.winTrades===1?'':'s'} · used in Goals` : 'no winning trades yet'}</div>
         </div>
       </div>
     </div>

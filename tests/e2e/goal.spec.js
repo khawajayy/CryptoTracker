@@ -166,4 +166,99 @@ test.describe('Goal Feature - Fixed & Step-Up Goals', () => {
     await page.click('.step-card[data-stepidx="3"] [data-delstep]');
     await expect(page.locator('.step-card')).toHaveCount(3);
   });
+
+  test('displays average estimated time to reach goal with default from ledger and allows manual adjustment', async ({ page }) => {
+    // 1. Inject ledger data with 1 winning trade held for exactly 4 days
+    await page.evaluate(() => {
+      const D = 86400000;
+      const now = Date.now();
+      const s = {
+        transactions: [
+          { id: '1', type: 'DEPOSIT', amount: 5000, date: new Date(now - 10 * D).toISOString() },
+          { id: '2', type: 'BUY', assetId: 'stock:SNDK', qty: 100, price: 10, fee: 0, date: new Date(now - 8 * D).toISOString() },
+          { id: '3', type: 'SELL', assetId: 'stock:SNDK', qty: 100, price: 15, fee: 0, date: new Date(now - 4 * D).toISOString() },
+        ],
+        assets: {
+          'stock:SNDK': { id: 'stock:SNDK', type: 'stock', symbol: 'SNDK', name: 'SanDisk' }
+        },
+        ui: { mode: 'goal', view: 'dashboard' },
+        goals: []
+      };
+      localStorage.setItem("cryptoledger.v1", JSON.stringify(s));
+    });
+    await page.reload();
+
+    // 2. Verify Ledger displays Avg Time / Profitable Trade = 4d
+    await page.click('#modeSeg button[data-mode="portfolio"]');
+    await page.click('.tab[data-view="ledger"]');
+    const analyticsPanel = page.locator('.analytics-panel');
+    await expect(analyticsPanel).toBeVisible();
+    const avgTimeCard = analyticsPanel.locator('.card:has-text("Avg Time / Profitable Trade")');
+    await expect(avgTimeCard).toBeVisible();
+    await expect(avgTimeCard.locator('.value')).toHaveText('4d');
+
+    // 3. Switch to Goals mode
+    await page.click('#modeSeg button[data-mode="goal"]');
+    await page.click('#goalAdd');
+
+    // 4. In Goal creation form, check that trade days defaults from ledger (4 days)
+    const tradeDaysInput = page.locator('#gfTradeDays');
+    await expect(tradeDaysInput).toBeVisible();
+    await expect(tradeDaysInput).toHaveAttribute('placeholder', /4/);
+    await expect(page.locator('#gfUseLedgerDays')).toContainText('4d');
+
+    // Click Use Ledger Avg button to fill it
+    await page.click('#gfUseLedgerDays');
+    await expect(tradeDaysInput).toHaveValue('4');
+
+    // Fill remaining fixed goal details and save
+    await page.fill('#gfName', 'Milestone 50k');
+    await page.fill('#gfTarget', '50,000');
+    await page.fill('#gfPct', '10');
+    await page.click('#gfSave');
+
+    // 5. Goal card should appear with average estimated time to reach goal and default trade days
+    const card = page.locator('.card:has-text("Milestone 50k")');
+    await expect(card).toBeVisible();
+
+    const tradeDaysCardInput = card.locator('input[data-goaltradedays]');
+    await expect(tradeDaysCardInput).toHaveValue('4');
+
+    const estTimeStat = card.locator('.goalstat:has-text("Avg estimated time to reach goal")');
+    await expect(estTimeStat).toBeVisible();
+    const estDaysInput = card.locator('input[data-goalestdays]');
+    await expect(estDaysInput).toBeVisible();
+
+    const badge = card.locator('[data-estbadge]');
+    await expect(badge).toContainText('defaulted from ledger (4d/trade)');
+
+    // 6. Manually adjust the days per trade on the card
+    await tradeDaysCardInput.fill('2');
+    await tradeDaysCardInput.dispatchEvent('input');
+
+    // Badge should now indicate manually adjusted
+    await expect(card.locator('[data-estbadge]')).toContainText('manually adjusted');
+
+    // 7. Manually adjust total estimated days on the card
+    const currentTradeDays = await tradeDaysCardInput.inputValue();
+    expect(Number(currentTradeDays)).toBe(2);
+
+    // 8. Click reset button to restore ledger default
+    const resetBtn = card.locator('[data-goalresetdays]');
+    await expect(resetBtn).toBeVisible();
+    await resetBtn.click();
+    await expect(page.locator('.toast')).toHaveText('Reset trade time to ledger default');
+
+    // Card should revert back to ledger default (4 days)
+    await expect(card.locator('input[data-goaltradedays]')).toHaveValue('4');
+    await expect(card.locator('[data-estbadge]')).toContainText('defaulted from ledger (4d/trade)');
+
+    // 9. Reload page and verify persistence
+    await page.reload();
+    await page.click('#modeSeg button[data-mode="goal"]');
+    const reloadedCard = page.locator('.card:has-text("Milestone 50k")');
+    await expect(reloadedCard).toBeVisible();
+    await expect(reloadedCard.locator('input[data-goaltradedays]')).toHaveValue('4');
+    await expect(reloadedCard.locator('.goalstat:has-text("Avg estimated time to reach goal")')).toBeVisible();
+  });
 });
