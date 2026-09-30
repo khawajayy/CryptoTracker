@@ -3,6 +3,7 @@ const {
   calculateStepUpGoal,
   validateStepUpGoal,
   tradesToGoal,
+  estimateTimeToGoal,
   roundCurrency
 } = require("../../js/goal-calc.js");
 
@@ -264,5 +265,57 @@ test.describe('GoalCalc - Step-Up Calculation', () => {
       steps: [{ target: 15000, profitPct: 20 }]
     });
     expect(stepUpResult.totalTrades).toBe(fixedTrades);
+  });
+});
+
+test.describe('GoalCalc - Estimated Time to Goal', () => {
+  test('returns fallback for invalid or non-positive inputs', () => {
+    expect(estimateTimeToGoal(0, 5)).toEqual({ totalDays: 0, formatted: '—' });
+    expect(estimateTimeToGoal(-1, 5)).toEqual({ totalDays: 0, formatted: '—' });
+    expect(estimateTimeToGoal(10, 0)).toEqual({ totalDays: 0, formatted: '—' });
+    expect(estimateTimeToGoal(10, -3)).toEqual({ totalDays: 0, formatted: '—' });
+    expect(estimateTimeToGoal(NaN, 5)).toEqual({ totalDays: 0, formatted: '—' });
+    expect(estimateTimeToGoal(5, null)).toEqual({ totalDays: 0, formatted: '—' });
+  });
+
+  test('formats minutes and hours properly for short durations', () => {
+    // 0.02 days = ~29 minutes
+    const resMins = estimateTimeToGoal(1, 0.02);
+    expect(resMins.formatted).toBe('≈ 29 mins');
+
+    // 0.5 days = 12 hours
+    const resHours = estimateTimeToGoal(1, 0.5);
+    expect(resHours.formatted).toBe('≈ 12 hrs');
+  });
+
+  test('formats days properly under 14 days', () => {
+    const res1 = estimateTimeToGoal(1, 1);
+    expect(res1.totalDays).toBe(1);
+    expect(res1.formatted).toBe('≈ 1 day');
+
+    const res3_5 = estimateTimeToGoal(1, 3.5);
+    expect(res3_5.totalDays).toBe(3.5);
+    expect(res3_5.formatted).toBe('≈ 3.5 days');
+
+    const res10 = estimateTimeToGoal(2, 5);
+    expect(res10.totalDays).toBe(10);
+    expect(res10.formatted).toBe('≈ 10 days');
+  });
+
+  test('formats weeks and months for multi-week and multi-month horizons', () => {
+    // 21 days = 3 weeks
+    const resWks = estimateTimeToGoal(7, 3);
+    expect(resWks.totalDays).toBe(21);
+    expect(resWks.formatted).toBe('≈ 21 days (≈ 3.0 wks)');
+
+    // 60 days = ~2.0 months
+    const resMos = estimateTimeToGoal(20, 3);
+    expect(resMos.totalDays).toBe(60);
+    expect(resMos.formatted).toBe('≈ 60 days (≈ 2.0 mo)');
+
+    // 400 days = ~1.1 years
+    const resYrs = estimateTimeToGoal(100, 4);
+    expect(resYrs.totalDays).toBe(400);
+    expect(resYrs.formatted).toBe('≈ 1.1 yrs (400 days)');
   });
 });

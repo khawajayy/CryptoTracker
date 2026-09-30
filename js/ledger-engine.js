@@ -162,6 +162,7 @@
         ? g.steps.slice(0, 50).map((st) => ({ target: Number(st && st.target) || 0, profitPct: Number(st && st.profitPct) || 0 }))
         : (isStepUp ? [{ target: Number(g.target) || 10000, profitPct: Number(g.profitPct) || 10 }] : []);
       const start = Number(g.startAmount);
+      const tradeDays = Number(g.tradeDays);
       return {
         id: isSafeId(g.id) ? g.id : makeId(),
         name: str(g.name, MAX_NAME) || (isStepUp ? "Step-Up Goal" : "Goal"),
@@ -170,6 +171,7 @@
         profitPct: Number(g.profitPct) || 10,
         startAmount: g.startAmount != null && Number.isFinite(start) ? start : null,
         steps,
+        tradeDays: Number.isFinite(tradeDays) && tradeDays > 0 ? Math.round(tradeDays * 100) / 100 : null,
       };
     });
   }
@@ -361,6 +363,7 @@
   function computeClosedTradesAndAnalytics(allTxns, range, assets) {
     const chron = sortChrono(allTxns || []);
     const pos = dict();
+    const buyLots = dict();
     const realizedByTxn = dict();
     const basisByTxn = dict();
     const activeSellGroupByAsset = dict();
@@ -373,6 +376,14 @@
         const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
         p.qty += t.qty;
         p.costBasis += gross + fee;
+
+        const lots = buyLots[t.assetId] || (buyLots[t.assetId] = []);
+        const tMs = new Date(t.date).getTime();
+        lots.push({
+          qty: t.qty,
+          date: t.date,
+          ms: Number.isFinite(tMs) ? tMs : 0,
+        });
 
         if (activeSellGroupByAsset[t.assetId]) {
           delete activeSellGroupByAsset[t.assetId];
@@ -388,9 +399,33 @@
         realizedByTxn[t.id] = rz;
         basisByTxn[t.id] = basisSold;
 
+        const sellMs = new Date(t.date).getTime();
+        const validSellMs = Number.isFinite(sellMs) ? sellMs : 0;
+        let remQty = t.qty;
+        let weightedDurMs = 0;
+        let matchedQty = 0;
+        const lots = buyLots[t.assetId] || (buyLots[t.assetId] = []);
+
+        while (remQty > EPS && lots.length > 0) {
+          const lot = lots[0];
+          const takeQty = Math.min(remQty, lot.qty);
+          const durMs = Math.max(0, validSellMs - lot.ms);
+          weightedDurMs += durMs * takeQty;
+          matchedQty += takeQty;
+          lot.qty -= takeQty;
+          remQty -= takeQty;
+          if (lot.qty < EPS) {
+            lots.shift();
+          }
+        }
+
         p.qty -= t.qty;
         p.costBasis -= basisSold;
-        if (p.qty < EPS) { p.qty = 0; p.costBasis = 0; }
+        if (p.qty < EPS) {
+          p.qty = 0;
+          p.costBasis = 0;
+          buyLots[t.assetId] = [];
+        }
 
         let grp = activeSellGroupByAsset[t.assetId];
         if (!grp) {
@@ -414,19 +449,41 @@
           price: t.price,
           fee,
           date: t.date,
+          matchedQty,
+          weightedDurMs,
         });
       } else if (t.type === "ADJUST") {
         if (t.target !== "cash") {
           const p = pos[t.assetId] || (pos[t.assetId] = { qty: 0, costBasis: 0 });
+          const lots = buyLots[t.assetId] || (buyLots[t.assetId] = []);
           if (t.qtyDelta >= 0) {
             p.qty += t.qtyDelta;
+            const tMs = new Date(t.date).getTime();
+            lots.push({
+              qty: t.qtyDelta,
+              date: t.date,
+              ms: Number.isFinite(tMs) ? tMs : 0,
+            });
           } else {
             const rq = Math.min(-t.qtyDelta, p.qty);
             const avg = p.qty > 0 ? p.costBasis / p.qty : 0;
             p.qty -= rq;
             p.costBasis -= avg * rq;
+
+            let remAdj = rq;
+            while (remAdj > EPS && lots.length > 0) {
+              const lot = lots[0];
+              const take = Math.min(remAdj, lot.qty);
+              lot.qty -= take;
+              remAdj -= take;
+              if (lot.qty < EPS) lots.shift();
+            }
           }
-          if (p.qty < EPS) { p.qty = 0; p.costBasis = 0; }
+          if (p.qty < EPS) {
+            p.qty = 0;
+            p.costBasis = 0;
+            buyLots[t.assetId] = [];
+          }
 
           if (activeSellGroupByAsset[t.assetId]) {
             delete activeSellGroupByAsset[t.assetId];
@@ -447,6 +504,16 @@
       grp.earliestDate = grp.items[0].date;
       grp.latestDate = grp.items[grp.items.length - 1].date;
       grp.isCombined = grp.items.length > 1;
+
+      let grpWeightedDur = 0, grpMatchedQty = 0;
+      for (const it of grp.items) {
+        if (it.matchedQty > 0) {
+          grpWeightedDur += it.weightedDurMs;
+          grpMatchedQty += it.matchedQty;
+        }
+      }
+      grp.holdingTimeMs = grpMatchedQty > 0 ? grpWeightedDur / grpMatchedQty : 0;
+      grp.holdingTimeDays = grp.holdingTimeMs / 86400000;
     }
 
     const R = range || { isAll: true };
@@ -462,16 +529,19 @@
     let beTrades = 0;
     let totalVolume = 0, totalFees = 0, sumReturnPct = 0;
     let bestTrade = null, worstTrade = null;
+    let winHoldingTimeMs = 0, totalHoldingTimeMs = 0;
 
     for (const tr of inRangeGroups) {
       const rz = tr.collectiveRealized;
       totalVolume += tr.totalGross;
       totalFees += tr.totalFees;
       sumReturnPct += tr.collectiveReturnPct;
+      totalHoldingTimeMs += tr.holdingTimeMs || 0;
 
       if (rz > 0.005) {
         winTrades++;
         winAmount += rz;
+        winHoldingTimeMs += tr.holdingTimeMs || 0;
         if (!bestTrade || rz > bestTrade.collectiveRealized) {
           bestTrade = tr;
         }
@@ -494,6 +564,11 @@
     const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : (avgWin > 0 ? Infinity : null);
     const expectancy = totalClosedTrades > 0 ? netRealized / totalClosedTrades : 0;
     const avgReturnPct = totalClosedTrades > 0 ? sumReturnPct / totalClosedTrades : 0;
+
+    const avgHoldingTimeProfitableMs = winTrades > 0 ? winHoldingTimeMs / winTrades : null;
+    const avgHoldingTimeProfitableDays = avgHoldingTimeProfitableMs !== null ? avgHoldingTimeProfitableMs / 86400000 : null;
+    const avgHoldingTimeAllMs = totalClosedTrades > 0 ? totalHoldingTimeMs / totalClosedTrades : null;
+    const avgHoldingTimeAllDays = avgHoldingTimeAllMs !== null ? avgHoldingTimeAllMs / 86400000 : null;
 
     return {
       realizedByTxn,
@@ -520,6 +595,10 @@
         totalFees,
         bestTrade,
         worstTrade,
+        avgHoldingTimeProfitableMs,
+        avgHoldingTimeProfitableDays,
+        avgHoldingTimeAllMs,
+        avgHoldingTimeAllDays,
       },
     };
   }

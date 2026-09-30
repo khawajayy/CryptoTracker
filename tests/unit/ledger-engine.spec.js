@@ -210,6 +210,9 @@ test.describe("LedgerEngine - trade analytics & grouped partial sells", () => {
     expect(a.netRealized).toBe(100);
     expect(a.winRatePct).toBe(100);
     expect(a.profitFactor).toBe(Infinity);
+    expect(grp.holdingTimeDays).toBe(1.5);
+    expect(a.avgHoldingTimeProfitableDays).toBe(1.5);
+    expect(a.avgHoldingTimeAllDays).toBe(1.5);
   });
 
   test("intervening BUY resets active sell group so sells are treated as separate trades", () => {
@@ -225,6 +228,27 @@ test.describe("LedgerEngine - trade analytics & grouped partial sells", () => {
     expect(res.allSellGroups[0].isCombined).toBe(false);
     expect(res.allSellGroups[1].isCombined).toBe(false);
     expect(res.analytics.totalClosedTrades).toBe(2);
+    // Trade 1 (win: +$100): bought at T0+D, sold at T0+2D -> 1 day
+    expect(res.allSellGroups[0].holdingTimeDays).toBe(1);
+    // Trade 2 (loss: -$200): 50 units bought at T0+D sold at T0+4D (3 days), 50 units bought at T0+3D sold at T0+4D (1 day) -> avg 2 days
+    expect(res.allSellGroups[1].holdingTimeDays).toBe(2);
+    // Only Trade 1 is profitable
+    expect(res.analytics.avgHoldingTimeProfitableDays).toBe(1);
+    // All closed trades average: (1 + 2) / 2 = 1.5 days
+    expect(res.analytics.avgHoldingTimeAllDays).toBe(1.5);
+  });
+
+  test("sanitizeGoals preserves valid tradeDays and ignores non-positive values", () => {
+    const sanitized = LE.sanitizeGoals([
+      { id: "g1", name: "Goal 1", target: 5000, profitPct: 10, tradeDays: 3.5 },
+      { id: "g2", name: "Goal 2", target: 10000, profitPct: 15, tradeDays: -2 },
+      { id: "g3", name: "Goal 3", target: 20000, profitPct: 12, tradeDays: "not-a-num" },
+      { id: "g4", name: "Goal 4", target: 25000, profitPct: 10 }
+    ]);
+    expect(sanitized[0].tradeDays).toBe(3.5);
+    expect(sanitized[1].tradeDays).toBeNull();
+    expect(sanitized[2].tradeDays).toBeNull();
+    expect(sanitized[3].tradeDays).toBeNull();
   });
 });
 
