@@ -2337,7 +2337,7 @@ function renderSettings(){
         <div class="field">
           <label>Finnhub API key (for live stock prices)</label>
           <input type="text" id="setKey" value="${esc(s.finnhubKey||"")}" placeholder="paste your free key" autocomplete="off" spellcheck="false" />
-          <div class="hint">Get a free key at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>. Crypto prices via CoinGecko need no key.</div>
+          <div class="hint">Get a free key at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>. Crypto &amp; bStocks live prices via Binance require no key.</div>
         </div>
         <div class="field">
           <label>Secondary currency (shown on dashboard alongside USD)</label>
@@ -2439,16 +2439,64 @@ function priceTargets(){
   for(const f of state.favorites){ map[f.id]=f; }
   return Object.values(map);
 }
+function resolveBinancePrice(symbol, priceMap){
+  if(!symbol || !priceMap) return null;
+  const sym = symbol.toUpperCase().trim();
+  if(priceMap.has(sym)) return priceMap.get(sym);
+  if(priceMap.has(sym + "USDT")) return priceMap.get(sym + "USDT");
+  if(priceMap.has(sym + "FDUSD")) return priceMap.get(sym + "FDUSD");
+  if(priceMap.has(sym + "USDC")) return priceMap.get(sym + "USDC");
+  if(!sym.endsWith("B") && priceMap.has(sym + "BUSDT")) return priceMap.get(sym + "BUSDT");
+  return null;
+}
+
 async function fetchCryptoPrices(assets){
-  const ids = [...new Set(assets.map(a=>a.coingeckoId))];
-  const j = await fetchJSON(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.map(encodeURIComponent).join(",")}&vs_currencies=usd`);
   const now = new Date().toISOString();
-  let ok=0;
-  for(const a of assets){
-    const usd = j && j[a.coingeckoId] && j[a.coingeckoId].usd;
-    if(Number.isFinite(usd) && usd>0){ state.prices[a.id]={price:usd, updatedAt:now}; ok++; }
+  let binanceMap = null;
+  try{
+    const list = await fetchJSON("https://api.binance.com/api/v3/ticker/price");
+    if(Array.isArray(list)){
+      binanceMap = new Map();
+      for(const it of list){
+        const val = parseFloat(it.price);
+        if(Number.isFinite(val) && val > 0) binanceMap.set(it.symbol, val);
+      }
+    }
+  }catch(e){
+    // Binance may be unreachable or mocked in test environments
   }
-  return { ok, fail: assets.length-ok };
+
+  let ok = 0;
+  const unresolved = [];
+  for(const a of assets){
+    const price = resolveBinancePrice(a.symbol, binanceMap);
+    if(Number.isFinite(price) && price > 0){
+      state.prices[a.id] = { price, updatedAt: now };
+      ok++;
+    } else {
+      unresolved.push(a);
+    }
+  }
+
+  // Fallback to CoinGecko for anything not matched on Binance that has a coingeckoId
+  const cgTargets = unresolved.filter(a => a.coingeckoId);
+  if(cgTargets.length){
+    try{
+      const ids = [...new Set(cgTargets.map(a => a.coingeckoId))];
+      const j = await fetchJSON(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.map(encodeURIComponent).join(",")}&vs_currencies=usd`);
+      for(const a of cgTargets){
+        const usd = j && j[a.coingeckoId] && j[a.coingeckoId].usd;
+        if(Number.isFinite(usd) && usd > 0){
+          state.prices[a.id] = { price: usd, updatedAt: now };
+          ok++;
+        }
+      }
+    }catch(e){
+      // CoinGecko fallback failed (e.g. 403 Forbidden or offline)
+    }
+  }
+
+  return { ok, fail: assets.length - ok };
 }
 async function fetchStockQuote(symbol, key){
   const j = await fetchJSON(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol.toUpperCase())}&token=${encodeURIComponent(key)}`);
@@ -2479,7 +2527,7 @@ async function doRefreshPrices(){
   const status = document.getElementById("apiStatus");
   await fetchFx();                       // keep USD -> secondary-currency rate fresh (throttled)
   const targets = priceTargets();
-  const cryptos = targets.filter(a=>a.type==="crypto" && a.coingeckoId);
+  const cryptos = targets.filter(a=>a.type==="crypto");
   const stocks = targets.filter(a=>a.type==="stock");
   if(!cryptos.length && !stocks.length){ status.textContent="prices: nothing to price"; render(); return; }
   status.textContent="prices: updating…";
@@ -2733,12 +2781,19 @@ function updateTradeCalc(){
 
 /* asset search (CoinGecko for crypto, Finnhub for stocks) — reusable */
 const typedStock = (q) => [{type:"stock",symbol:q.toUpperCase().slice(0,32),name:q.toUpperCase().slice(0,32),coingeckoId:null,img:null}];
+const typedCrypto = (q) => [{type:"crypto",symbol:q.toUpperCase().slice(0,32),name:q.toUpperCase().slice(0,32),coingeckoId:null,img:null}];
 async function searchAssets(q, assetType){
   if(assetType==="crypto"){
-    const j=await fetchJSON(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
-    return (Array.isArray(j && j.coins) ? j.coins : [])
-      .filter(c=>c && typeof c.symbol==="string" && c.symbol && typeof c.id==="string")
-      .slice(0,8).map(c=>({type:"crypto",symbol:c.symbol,name:String(c.name||""),coingeckoId:c.id,img:c.thumb}));
+    try{
+      const j=await fetchJSON(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`);
+      const items = (Array.isArray(j && j.coins) ? j.coins : [])
+        .filter(c=>c && typeof c.symbol==="string" && c.symbol && typeof c.id==="string")
+        .slice(0,8).map(c=>({type:"crypto",symbol:c.symbol,name:String(c.name||""),coingeckoId:c.id,img:c.thumb}));
+      if(items.length) return items;
+    }catch(e){
+      // CoinGecko search failed, fall back to typed crypto
+    }
+    return typedCrypto(q);
   }
   const key=state.settings.finnhubKey;
   if(!key) return typedStock(q);
@@ -2780,9 +2835,27 @@ async function useLivePrice(){
   if(!pickedAsset){ toast("Pick an asset first", true); return; }
   try{
     let price=null;
-    if(pickedAsset.type==="crypto" && pickedAsset.coingeckoId){
-      const j=await fetchJSON(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(pickedAsset.coingeckoId)}&vs_currencies=usd`);
-      price = j && j[pickedAsset.coingeckoId] ? j[pickedAsset.coingeckoId].usd : null;
+    if(pickedAsset.type==="crypto"){
+      const sym = (pickedAsset.symbol||"").toUpperCase().trim();
+      const candidates = [sym + "USDT", sym + "FDUSD", sym + "USDC", sym];
+      if(!sym.endsWith("B")) candidates.push(sym + "BUSDT");
+      for(const s of candidates){
+        try{
+          const d = await fetchJSON(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(s)}`);
+          const val = parseFloat(d && d.price);
+          if(Number.isFinite(val) && val > 0){ price = val; break; }
+        }catch(e){
+          // candidate pair not listed on Binance, try next
+        }
+      }
+      if(!(Number.isFinite(price) && price > 0) && pickedAsset.coingeckoId){
+        try{
+          const j = await fetchJSON(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(pickedAsset.coingeckoId)}&vs_currencies=usd`);
+          price = j && j[pickedAsset.coingeckoId] ? j[pickedAsset.coingeckoId].usd : null;
+        }catch(e){
+          // CoinGecko live price fetch failed
+        }
+      }
     }else if(pickedAsset.type==="stock"){
       const key=state.settings.finnhubKey; if(!key){ toast("Add a Finnhub key in Settings", true); return; }
       price = await fetchStockQuote(pickedAsset.symbol, key);
