@@ -173,7 +173,7 @@
         profitPct: Number(g.profitPct) || 10,
         startAmount: g.startAmount != null && Number.isFinite(start) ? start : null,
         steps,
-        tradeDays: Number.isFinite(tradeDays) && tradeDays > 0 ? Math.round(tradeDays * 100) / 100 : null,
+        tradeDays: Number.isFinite(tradeDays) && tradeDays > 0 ? Math.round(tradeDays * 1e6) / 1e6 : null,
       };
     });
   }
@@ -368,6 +368,7 @@
     const buyLots = dict();
     const realizedByTxn = dict();
     const basisByTxn = dict();
+    const holdingMsByTxn = dict();   // SELL id -> FIFO qty-weighted holding time (only when matched)
     const activeSellGroupByAsset = dict();
     const allSellGroups = [];
     const sellGroupsMap = dict();
@@ -421,6 +422,8 @@
           }
         }
 
+        if (matchedQty > 0) holdingMsByTxn[t.id] = weightedDurMs / matchedQty;
+
         p.qty -= t.qty;
         p.costBasis -= basisSold;
         if (p.qty < EPS) {
@@ -453,6 +456,7 @@
           date: t.date,
           matchedQty,
           weightedDurMs,
+          holdingTimeMs: matchedQty > 0 ? weightedDurMs / matchedQty : 0,
         });
       } else if (t.type === "ADJUST") {
         if (t.target !== "cash") {
@@ -514,6 +518,7 @@
           grpMatchedQty += it.matchedQty;
         }
       }
+      grp.hasHoldingTime = grpMatchedQty > 0;
       grp.holdingTimeMs = grpMatchedQty > 0 ? grpWeightedDur / grpMatchedQty : 0;
       grp.holdingTimeDays = grp.holdingTimeMs / 86400000;
     }
@@ -531,19 +536,21 @@
     let beTrades = 0;
     let totalVolume = 0, totalFees = 0, sumReturnPct = 0;
     let bestTrade = null, worstTrade = null;
-    let winHoldingTimeMs = 0, totalHoldingTimeMs = 0;
+    // Only trades whose sells matched a buy lot have a real duration; counting
+    // the rest as 0 would drag the averages down.
+    let winHoldingTimeMs = 0, totalHoldingTimeMs = 0, winTimed = 0, allTimed = 0;
 
     for (const tr of inRangeGroups) {
       const rz = tr.collectiveRealized;
       totalVolume += tr.totalGross;
       totalFees += tr.totalFees;
       sumReturnPct += tr.collectiveReturnPct;
-      totalHoldingTimeMs += tr.holdingTimeMs || 0;
+      if (tr.hasHoldingTime) { totalHoldingTimeMs += tr.holdingTimeMs; allTimed++; }
 
       if (rz > 0.005) {
         winTrades++;
         winAmount += rz;
-        winHoldingTimeMs += tr.holdingTimeMs || 0;
+        if (tr.hasHoldingTime) { winHoldingTimeMs += tr.holdingTimeMs; winTimed++; }
         if (!bestTrade || rz > bestTrade.collectiveRealized) {
           bestTrade = tr;
         }
@@ -567,14 +574,15 @@
     const expectancy = totalClosedTrades > 0 ? netRealized / totalClosedTrades : 0;
     const avgReturnPct = totalClosedTrades > 0 ? sumReturnPct / totalClosedTrades : 0;
 
-    const avgHoldingTimeProfitableMs = winTrades > 0 ? winHoldingTimeMs / winTrades : null;
+    const avgHoldingTimeProfitableMs = winTimed > 0 ? winHoldingTimeMs / winTimed : null;
     const avgHoldingTimeProfitableDays = avgHoldingTimeProfitableMs !== null ? avgHoldingTimeProfitableMs / 86400000 : null;
-    const avgHoldingTimeAllMs = totalClosedTrades > 0 ? totalHoldingTimeMs / totalClosedTrades : null;
+    const avgHoldingTimeAllMs = allTimed > 0 ? totalHoldingTimeMs / allTimed : null;
     const avgHoldingTimeAllDays = avgHoldingTimeAllMs !== null ? avgHoldingTimeAllMs / 86400000 : null;
 
     return {
       realizedByTxn,
       basisByTxn,
+      holdingMsByTxn,
       allSellGroups,
       inRangeGroups,
       sellGroupsMap,

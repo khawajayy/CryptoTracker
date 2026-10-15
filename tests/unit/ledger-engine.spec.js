@@ -247,6 +247,39 @@ test.describe("LedgerEngine - trade analytics & grouped partial sells", () => {
     expect(res.analytics.avgHoldingTimeAllDays).toBe(1.5);
   });
 
+  test("exposes per-sell and per-fill holding time", () => {
+    const H = 3600000;
+    const txns = [
+      { id: "1", type: "DEPOSIT", amount: 3000, date: iso(T0) },
+      { id: "2", type: "BUY", assetId: "crypto:btc", qty: 2, price: 100, fee: 0, date: iso(T0) },
+      { id: "3", type: "SELL", assetId: "crypto:btc", qty: 1, price: 110, fee: 0, date: iso(T0 + 2 * H) },
+      { id: "4", type: "SELL", assetId: "crypto:btc", qty: 1, price: 110, fee: 0, date: iso(T0 + 6 * H) },
+    ];
+    const res = LE.computeClosedTradesAndAnalytics(txns, { isAll: true }, {});
+    expect(res.holdingMsByTxn["3"]).toBe(2 * H);
+    expect(res.holdingMsByTxn["4"]).toBe(6 * H);
+    const grp = res.allSellGroups[0];
+    expect(grp.items.map((it) => it.holdingTimeMs)).toEqual([2 * H, 6 * H]);
+    expect(grp.holdingTimeMs).toBe(4 * H);
+    // intraday averages keep their precision (4h = 1/6 day)
+    expect(res.analytics.avgHoldingTimeProfitableDays).toBeCloseTo(1 / 6, 10);
+  });
+
+  test("sells with no matching buy lot do not drag the average holding time down", () => {
+    const txns = [
+      { id: "1", type: "DEPOSIT", amount: 3000, date: iso(T0) },
+      { id: "2", type: "BUY", assetId: "stock:A", qty: 10, price: 10, fee: 0, date: iso(T0) },
+      { id: "3", type: "SELL", assetId: "stock:A", qty: 10, price: 12, fee: 0, date: iso(T0 + 2 * D) },
+      // sold without any recorded buy (e.g. imported holding) -> no duration
+      { id: "4", type: "SELL", assetId: "stock:B", qty: 1, price: 50, fee: 0, date: iso(T0 + 3 * D) },
+    ];
+    const res = LE.computeClosedTradesAndAnalytics(txns, { isAll: true }, {});
+    expect(res.analytics.winTrades).toBe(2);
+    expect(res.holdingMsByTxn["4"]).toBeUndefined();
+    expect(res.analytics.avgHoldingTimeProfitableDays).toBe(2);
+    expect(res.analytics.avgHoldingTimeAllDays).toBe(2);
+  });
+
   test("sanitizeGoals preserves valid tradeDays and ignores non-positive values", () => {
     const sanitized = LE.sanitizeGoals([
       { id: "g1", name: "Goal 1", target: 5000, profitPct: 10, tradeDays: 3.5 },
