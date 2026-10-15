@@ -171,7 +171,16 @@ test.describe("LedgerEngine - validation", () => {
   test("sanitizeSettings keeps only known values", () => {
     const d = { finnhubKey: "", autoRefreshSec: 0, secondaryCurrency: "PKR", manualRate: null };
     const s = LE.sanitizeSettings({ finnhubKey: " abc\n123 ", autoRefreshSec: 1, secondaryCurrency: "<b>", manualRate: -3, extra: 1 }, d);
-    expect(s).toEqual({ finnhubKey: "abc123", autoRefreshSec: 0, secondaryCurrency: "PKR", manualRate: null });
+    expect(s).toEqual({ finnhubKey: "abc123", autoRefreshSec: 0, secondaryCurrency: "PKR", manualRate: null, owedToOthers: 0 });
+  });
+
+  test("sanitizeSettings keeps a valid owedToOthers and drops bad ones", () => {
+    const d = { finnhubKey: "", autoRefreshSec: 0, secondaryCurrency: "PKR", manualRate: null, owedToOthers: 0 };
+    expect(LE.sanitizeSettings({ owedToOthers: 1234.567 }, d).owedToOthers).toBe(1234.57);
+    expect(LE.sanitizeSettings({ owedToOthers: -50 }, d).owedToOthers).toBe(0);
+    expect(LE.sanitizeSettings({ owedToOthers: "500" }, d).owedToOthers).toBe(0);
+    expect(LE.sanitizeSettings({ owedToOthers: Infinity }, d).owedToOthers).toBe(0);
+    expect(LE.sanitizeSettings({}, d).owedToOthers).toBe(0);
   });
 
   test("sanitizeUi falls back to defaults for unknown values", () => {

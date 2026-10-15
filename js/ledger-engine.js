@@ -147,6 +147,8 @@
     if ([0, 30, 60, 300].includes(s.autoRefreshSec)) o.autoRefreshSec = s.autoRefreshSec;
     if (typeof s.secondaryCurrency === "string" && /^[A-Z]{3}$/.test(s.secondaryCurrency)) o.secondaryCurrency = s.secondaryCurrency;
     o.manualRate = posNum(s.manualRate) ? s.manualRate : null;
+    // money owed to other people: a plain liability, never part of the ledger replay
+    o.owedToOthers = isNum(s.owedToOthers) && s.owedToOthers > 0 ? Math.round(s.owedToOthers * 100) / 100 : 0;
     return o;
   }
 

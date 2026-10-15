@@ -33,10 +33,13 @@ function fmtAmtStr(v){   // number/string -> "10,000.5" (thousands separators, d
 }
 function formatAmt(el){   // reformat an .amt input in place, preserving the caret
   const start=el.selectionStart!=null?el.selectionStart:el.value.length;
-  const digitsBefore=el.value.slice(0,start).replace(/[^\d]/g,"").length;
+  // count digits and the decimal point, so a caret right after a typed "." stays after it
+  const atEnd=start>=el.value.length;
+  const digitsBefore=el.value.slice(0,start).replace(/[^\d.]/g,"").length;
   const out=fmtAmtStr(el.value);
   el.value=out;
-  let pos=0, seen=0; while(pos<out.length && seen<digitsBefore){ if(/\d/.test(out[pos])) seen++; pos++; }
+  let pos=0, seen=0; while(pos<out.length && seen<digitsBefore){ if(/[\d.]/.test(out[pos])) seen++; pos++; }
+  if(atEnd) pos=out.length;
   try{ el.setSelectionRange(pos,pos); }catch(e){ /* not a text input */ }
 }
 function setAmt(el, val){ if(el) el.value = (val===""||val==null)?"":fmtAmtStr(val); }
@@ -85,7 +88,7 @@ function defaultState(){
     transactions: [],                 // {id,type,date,note, ... }
     assets: Object.create(null),      // assetId -> {id,type,symbol,name,coingeckoId,img}
     prices: Object.create(null),      // assetId -> {price,updatedAt}
-    settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR", manualRate:null },
+    settings: { finnhubKey:"", autoRefreshSec:0, secondaryCurrency:"PKR", manualRate:null, owedToOthers:0 },
     fx: { base:"USD", rates:{}, updatedAt:null },   // USD -> other-currency rates
     goals: [],                                       // [{id,name,type,target,profitPct,startAmount,steps}]
     favorites: [],                                   // watchlist: [{id,type,symbol,name,coingeckoId,img}]
@@ -1074,6 +1077,8 @@ function renderDashboard(){
   const invSub = isAll ? `${fmtUSD(p.deposits)} in · ${fmtUSD(p.withdrawals)} out` : `${fmtUSD(R.depositsP)} in · ${fmtUSD(R.withdrawalsP)} out`;
   const feeVal = isAll ? p.feesPaid : R.feesP;
   const tag = isAll ? "" : `<span class="tag" style="font-size:9.5px">${R.label}</span>`;
+  const owed = state.settings.owedToOthers || 0;
+  const equityAfterDebts = p.equity - owed;
 
   viewEl.innerHTML = `
     ${rangeBarHTML()}
@@ -1106,6 +1111,12 @@ function renderDashboard(){
         <div class="sub muted">open positions</div>${secLine(un,true)}</div>
       <div class="card"><div class="label">Fees ${isAll?"paid":tag}</div><div class="value">${fmtUSD(feeVal)}</div>
         <div class="sub muted">${isAll?"total trading fees":"in range"}</div>${secLine(feeVal,false)}</div>
+      <div class="card" id="owedCard"><div class="label">Owed to others <small class="muted">editable</small></div>
+        <div class="flex" style="align-items:center;gap:4px"><span class="value ${owed>0?'neg':''}">$</span>
+          <input type="text" inputmode="decimal" class="amt value ${owed>0?'neg':''}" id="owedInput" value="${owed>0?fmtAmtStr(owed):""}" placeholder="0.00" autocomplete="off"
+            aria-label="Money owed to others (USD)" title="Money you owe to other people. Not part of your ledger or returns."
+            style="width:100%;min-width:0;background:transparent;border:1px dashed var(--border);border-radius:var(--radius);padding:2px 6px;font:inherit;font-weight:700;color:inherit"></div>
+        <div class="sub muted">equity after debts <b class="${cls(equityAfterDebts)}">${fmtUSD(equityAfterDebts)}</b></div>${secLine(owed,false)}</div>
     </div>
 
     <div class="panel" style="margin-top:18px">
@@ -1118,9 +1129,29 @@ function renderDashboard(){
     </div>
   `;
   document.getElementById("freshHint").textContent = freshnessText(p.holdings);
+  wireOwedInput();
   wireRangeBar();
   wireEquityHover();
   fetchMarketHistoryForAllHeld();
+}
+
+// "Owed to others" card: format while typing, commit on blur/Enter.
+function wireOwedInput(){
+  const inp = document.getElementById("owedInput");
+  if(!inp) return;
+  inp.addEventListener("input", () => formatAmt(inp));
+  inp.addEventListener("keydown", (e) => { if(e.key === "Enter") inp.blur(); });
+  inp.addEventListener("change", () => {
+    const raw = inp.value.trim();
+    const v = raw === "" ? 0 : stripNum(raw);
+    if(!(v >= 0)){ toast("Enter a valid amount (0 or more)", true); inp.value = fmtAmtStr(state.settings.owedToOthers || ""); return; }
+    const next = Math.round(v * 100) / 100;
+    if(next === (state.settings.owedToOthers || 0)) return;
+    state.settings.owedToOthers = next;
+    save();
+    render();
+    toast(next > 0 ? `Owed to others set to ${fmtUSD(next)}` : "Cleared money owed to others");
+  });
 }
 
 /* ---------- equity history + market charts ---------- */
