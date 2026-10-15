@@ -243,6 +243,18 @@ test.describe('Goal Feature - Fixed & Step-Up Goals', () => {
     const currentTradeDays = await tradeDaysCardInput.inputValue();
     expect(Number(currentTradeDays)).toBe(2);
 
+    // Typing a decimal key by key must not be reset by the live re-render
+    await tradeDaysCardInput.fill('');
+    await tradeDaysCardInput.pressSequentially('0.25');
+    await expect(card.locator('input[data-goaltradedays]')).toHaveValue('0.25');
+    await expect(card.locator('input[data-goaltradedays]')).toBeFocused();
+    await expect(card.locator('[data-estbadge]')).toContainText('manually adjusted');
+
+    // Typing a total estimate keeps exactly what was typed
+    await estDaysInput.fill('');
+    await estDaysInput.pressSequentially('12.5');
+    await expect(card.locator('input[data-goalestdays]')).toHaveValue('12.5');
+
     // 8. Click reset button to restore ledger default
     const resetBtn = card.locator('[data-goalresetdays]');
     await expect(resetBtn).toBeVisible();

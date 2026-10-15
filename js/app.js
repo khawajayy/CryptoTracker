@@ -343,8 +343,10 @@ function getLedgerProfitableTradeStats(){
     const res = LE.computeClosedTradesAndAnalytics(state.transactions, { isAll: true }, state.assets);
     const days = res && res.analytics && res.analytics.avgHoldingTimeProfitableDays;
     const wins = (res && res.analytics && res.analytics.winTrades) || 0;
+    // Keep full precision: intraday trades average well under 0.1 day, and
+    // rounding them to one decimal used to collapse the estimate to 0.
     if(days != null && Number.isFinite(days) && days > 0){
-      return { days: Math.round(days * 10) / 10, hasWins: true, count: wins };
+      return { days, hasWins: true, count: wins };
     }
   } catch(e) {
     console.warn("Could not compute ledger average trade days", e);
@@ -354,6 +356,28 @@ function getLedgerProfitableTradeStats(){
 
 function getLedgerAvgProfitableTradeDays(){
   return getLedgerProfitableTradeStats().days;
+}
+
+// Days value as shown in a number input (4 significant digits, no float noise).
+function fmtDaysInput(days){
+  return Number.isFinite(days) && days > 0 ? String(Number(days.toPrecision(4))) : "";
+}
+
+// A stored per-goal value that matches the ledger average (as rounded for the
+// input) is not a real override, so the goal keeps following the ledger.
+function sameDays(a, b){
+  return Math.abs(a - b) <= Math.max(1e-6, Math.abs(b) * 5e-4);
+}
+
+function normalizeTradeDays(v){
+  if(!(Number.isFinite(v) && v > 0)) return null;
+  return sameDays(v, getLedgerAvgProfitableTradeDays()) ? null : v;
+}
+
+function goalTradeDays(g){
+  const ledgerDays = getLedgerAvgProfitableTradeDays();
+  const isCustomDays = g.tradeDays != null && Number.isFinite(g.tradeDays) && g.tradeDays > 0 && !sameDays(g.tradeDays, ledgerDays);
+  return { ledgerDays, isCustomDays, tradeDays: isCustomDays ? g.tradeDays : ledgerDays };
 }
 
 // progress-ring SVG at a given size
@@ -379,10 +403,7 @@ function stepUpGoalCardHTML(g, equity){
   const reached = equity >= overallTarget - EPS;
   const gainNeededPct = equity > 0 ? (overallTarget / equity - 1) * 100 : null;
 
-  const stats = getLedgerProfitableTradeStats();
-  const ledgerDays = stats.days;
-  const isCustomDays = g.tradeDays != null && Number.isFinite(g.tradeDays) && g.tradeDays > 0 && Math.abs(g.tradeDays - ledgerDays) > 0.001;
-  const tradeDays = isCustomDays ? g.tradeDays : ledgerDays;
+  const { ledgerDays, isCustomDays, tradeDays } = goalTradeDays(g);
   const estTime = (!reached && calc.totalTrades > 0) ? estimateTimeToGoal(calc.totalTrades, tradeDays) : null;
   const estTotalDays = estTime ? estTime.totalDays : null;
 
@@ -421,17 +442,17 @@ function stepUpGoalCardHTML(g, equity){
       <div class="goalstat">
         <span class="k" title="Average duration per profitable trade (manually adjustable, defaults to ledger)">Avg time / profitable trade</span>
         <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
-          <input type="number" data-goaltradedays="${esc(g.id)}" value="${tradeDays}" step="any" min="0.01"
+          <input type="text" inputmode="decimal" autocomplete="off" data-goaltradedays="${esc(g.id)}" value="${fmtDaysInput(tradeDays)}"
             title="Average days per profitable trade (manually adjustable, defaults to ledger)"
             style="width:58px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px">
           <span class="muted" style="font-size:12px">d</span>
-          ${isCustomDays ? `<button class="iconbtn" data-goalresetdays="${esc(g.id)}" title="Reset to ledger average (${ledgerDays}d)" style="font-size:11px;padding:2px 4px;color:var(--accent)">↺</button>` : ''}
+          ${isCustomDays ? `<button class="iconbtn" data-goalresetdays="${esc(g.id)}" title="Reset to ledger average (${formatDurationDays(ledgerDays)})" style="font-size:11px;padding:2px 4px;color:var(--accent)">↺</button>` : ''}
         </span>
       </div>
       <div class="goalstat">
         <span class="k">Avg estimated time to reach goal</span>
         <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
-          <input type="number" data-goalestdays="${esc(g.id)}" value="${estTotalDays != null ? estTotalDays : ''}" step="any" min="0.1"
+          <input type="text" inputmode="decimal" autocomplete="off" data-goalestdays="${esc(g.id)}" value="${estTotalDays != null ? estTotalDays : ''}"
             title="Estimated total days to reach goal (manually adjustable)"
             style="width:64px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px;font-weight:700">
           <span class="muted" style="font-size:12px">d</span>
@@ -439,7 +460,7 @@ function stepUpGoalCardHTML(g, equity){
       </div>
       <div class="muted" style="font-size:11px;text-align:right;margin-top:-2px" data-estbadge="${esc(g.id)}">
         <span style="color:var(--accent);font-weight:600">${estTime ? estTime.formatted : '—'}</span>
-        · ${isCustomDays ? '✏️ manually adjusted' : `⚡ defaulted from ledger (${ledgerDays}d/trade)`}
+        · ${isCustomDays ? '✏️ manually adjusted' : `⚡ defaulted from ledger (${formatDurationDays(ledgerDays)}/trade)`}
       </div>
     ` : ''}
     <div class="goalstat"><span class="k">Final ending balance</span>
@@ -459,7 +480,7 @@ function stepUpGoalCardHTML(g, equity){
             <span class="tag">${st.profitPct}% / trade</span>
           </div>
           <div class="st-prog">${fmtUSD(st.startingBalance)} → <b>${fmtUSD(st.endingBalance)}</b></div>
-          <div class="st-sub">${st.tradesCount} ${st.tradesCount === 1 ? 'trade' : 'trades'} · Target: ${fmtUSD(st.targetAmount)} · Profit: +${fmtUSD(st.profitGenerated)}${!reached ? ` · Est: ≈ ${Math.round(st.tradesCount * tradeDays * 10) / 10}d` : ''}</div>
+          <div class="st-sub">${st.tradesCount} ${st.tradesCount === 1 ? 'trade' : 'trades'} · Target: ${fmtUSD(st.targetAmount)} · Profit: +${fmtUSD(st.profitGenerated)}${!reached && st.tradesCount > 0 ? ` · Est: ≈ ${formatDurationDays(st.tradesCount * tradeDays)}` : ''}</div>
         </div>
       `).join('')}
       <div class="step-arrow">↓</div>
@@ -534,10 +555,7 @@ function goalCardHTML(g, equity){
   const nTrades=tradesToGoal(equity, target, pct);
   const endAmount = nTrades!=null ? equity*Math.pow(1+pct/100, nTrades) : null;   // where you actually land
 
-  const stats = getLedgerProfitableTradeStats();
-  const ledgerDays = stats.days;
-  const isCustomDays = g.tradeDays != null && Number.isFinite(g.tradeDays) && g.tradeDays > 0 && Math.abs(g.tradeDays - ledgerDays) > 0.001;
-  const tradeDays = isCustomDays ? g.tradeDays : ledgerDays;
+  const { ledgerDays, isCustomDays, tradeDays } = goalTradeDays(g);
   const estTime = (nTrades != null && nTrades > 0) ? estimateTimeToGoal(nTrades, tradeDays) : null;
   const estTotalDays = estTime ? estTime.totalDays : null;
 
@@ -562,7 +580,7 @@ function goalCardHTML(g, equity){
     ${!reached ? `<div style="text-align:center;margin-top:12px">
         <span class="bignum">${nTrades!=null?`≈ ${nTrades}`:'—'}</span>
         <span class="muted"> ${nTrades===1?'trade':'trades'} at </span>
-        <input type="number" data-goalpct="${esc(g.id)}" value="${pct}" step="any" min="0"
+        <input type="text" inputmode="decimal" autocomplete="off" data-goalpct="${esc(g.id)}" value="${pct}"
           style="width:62px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius);text-align:right">
         <span class="muted"> % each</span>
         <div class="muted" style="font-size:12px;margin-top:6px">compounding ${pct}% each, reinvested, to reach ${fmtUSD(target)}</div>
@@ -573,17 +591,17 @@ function goalCardHTML(g, equity){
       <div class="goalstat">
         <span class="k" title="Average duration per profitable trade (manually adjustable, defaults to ledger)">Avg time / profitable trade</span>
         <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
-          <input type="number" data-goaltradedays="${esc(g.id)}" value="${tradeDays}" step="any" min="0.01"
+          <input type="text" inputmode="decimal" autocomplete="off" data-goaltradedays="${esc(g.id)}" value="${fmtDaysInput(tradeDays)}"
             title="Average days per profitable trade (manually adjustable, defaults to ledger)"
             style="width:58px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px">
           <span class="muted" style="font-size:12px">d</span>
-          ${isCustomDays ? `<button class="iconbtn" data-goalresetdays="${esc(g.id)}" title="Reset to ledger average (${ledgerDays}d)" style="font-size:11px;padding:2px 4px;color:var(--accent)">↺</button>` : ''}
+          ${isCustomDays ? `<button class="iconbtn" data-goalresetdays="${esc(g.id)}" title="Reset to ledger average (${formatDurationDays(ledgerDays)})" style="font-size:11px;padding:2px 4px;color:var(--accent)">↺</button>` : ''}
         </span>
       </div>
       <div class="goalstat">
         <span class="k">Avg estimated time to reach goal</span>
         <span class="v" style="display:flex;align-items:center;justify-content:flex-end;gap:5px">
-          <input type="number" data-goalestdays="${esc(g.id)}" value="${estTotalDays != null ? estTotalDays : ''}" step="any" min="0.1"
+          <input type="text" inputmode="decimal" autocomplete="off" data-goalestdays="${esc(g.id)}" value="${estTotalDays != null ? estTotalDays : ''}"
             title="Estimated total days to reach goal (manually adjustable)"
             style="width:64px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:var(--radius);text-align:right;font-size:12px;font-weight:700">
           <span class="muted" style="font-size:12px">d</span>
@@ -591,7 +609,7 @@ function goalCardHTML(g, equity){
       </div>
       <div class="muted" style="font-size:11px;text-align:right;margin-top:-2px" data-estbadge="${esc(g.id)}">
         <span style="color:var(--accent);font-weight:600">${estTime ? estTime.formatted : '—'}</span>
-        · ${isCustomDays ? '✏️ manually adjusted' : `⚡ defaulted from ledger (${ledgerDays}d/trade)`}
+        · ${isCustomDays ? '✏️ manually adjusted' : `⚡ defaulted from ledger (${formatDurationDays(ledgerDays)}/trade)`}
       </div>` : ``}
   </div>`;
 }
@@ -702,11 +720,11 @@ function renderGoal(){
           <div class="field">
             <label>Avg time per profitable trade (days)</label>
             <div class="flex" style="gap:8px">
-              <input id="gfTradeDays" type="number" step="any" min="0.01" value="${goalEditState.tradeDays != null ? goalEditState.tradeDays : ''}" placeholder="${ledgerDays} (from ledger)" style="flex:1">
-              <button type="button" class="btn sm" id="gfUseLedgerDays" title="Use current average from ledger (${ledgerDays} days)">Use ledger avg (${ledgerDays}d)</button>
+              <input id="gfTradeDays" type="number" step="any" min="0.01" value="${fmtDaysInput(goalEditState.tradeDays)}" placeholder="${fmtDaysInput(ledgerDays)} (from ledger)" style="flex:1">
+              <button type="button" class="btn sm" id="gfUseLedgerDays" title="Use current average from ledger (${formatDurationDays(ledgerDays)})">Use ledger avg (${formatDurationDays(ledgerDays)})</button>
             </div>
             <div class="muted" style="font-size:11.5px;margin-top:4px">
-              Takes default value (${ledgerDays} days) from the average time per profitable trade in your ledger. Leave blank to auto-sync with ledger.
+              Takes default value (${formatDurationDays(ledgerDays)}) from the average time per profitable trade in your ledger. Leave blank to auto-sync with ledger.
             </div>
           </div>
         ` : `
@@ -721,11 +739,11 @@ function renderGoal(){
           <div class="field">
             <label>Avg time per profitable trade (days)</label>
             <div class="flex" style="gap:8px">
-              <input id="gfTradeDays" type="number" step="any" min="0.01" value="${goalEditState.tradeDays != null ? goalEditState.tradeDays : ''}" placeholder="${ledgerDays} (from ledger)" style="flex:1">
-              <button type="button" class="btn sm" id="gfUseLedgerDays" title="Use current average from ledger (${ledgerDays} days)">Use ledger avg (${ledgerDays}d)</button>
+              <input id="gfTradeDays" type="number" step="any" min="0.01" value="${fmtDaysInput(goalEditState.tradeDays)}" placeholder="${fmtDaysInput(ledgerDays)} (from ledger)" style="flex:1">
+              <button type="button" class="btn sm" id="gfUseLedgerDays" title="Use current average from ledger (${formatDurationDays(ledgerDays)})">Use ledger avg (${formatDurationDays(ledgerDays)})</button>
             </div>
             <div class="muted" style="font-size:11.5px;margin-top:4px">
-              Takes default value (${ledgerDays} days) from the average time per profitable trade in your ledger. Leave blank to auto-sync with ledger.
+              Takes default value (${formatDurationDays(ledgerDays)}) from the average time per profitable trade in your ledger. Leave blank to auto-sync with ledger.
             </div>
           </div>
 
@@ -817,7 +835,7 @@ function renderGoal(){
     useLedgerBtn.onclick = () => {
       const tdInp = document.getElementById("gfTradeDays");
       if(tdInp){
-        tdInp.value = getLedgerAvgProfitableTradeDays();
+        tdInp.value = fmtDaysInput(getLedgerAvgProfitableTradeDays());
       }
     };
   }
@@ -857,7 +875,8 @@ function renderGoal(){
       syncGoalEditForm();
       const name = (goalEditState.name || "").trim();
       const isStepUp = goalEditState.type === "stepup";
-      const tradeDays = goalEditState.tradeDays;
+      // matching the ledger average means "follow the ledger", not a frozen copy of it
+      const tradeDays = normalizeTradeDays(goalEditState.tradeDays);
 
       if(!isStepUp){
         const target = Number(goalEditState.target);
@@ -936,21 +955,36 @@ function renderGoal(){
     }
   });
 
+  // Re-render the goal cards so every dependent number updates, but put back
+  // exactly what the user is typing: re-rendering from state would turn "1." into
+  // "1" and "0" into the old value, which made decimals impossible to enter.
+  const rerenderGoalKeepingInput = (attr, id, raw) => {
+    renderGoal();
+    const escId = window.CSS && CSS.escape ? CSS.escape(id) : id;
+    const again = viewEl.querySelector(`[${attr}="${escId}"]`);
+    if(again){
+      again.value = raw;
+      again.focus();
+      again.setSelectionRange(raw.length, raw.length);
+    }
+  };
+
+  const goalTotalTrades = (g) => {
+    if(g.type === "stepup"){
+      const steps = Array.isArray(g.steps) && g.steps.length ? g.steps : [{ target: g.target || 15000, profitPct: g.profitPct || 10 }];
+      const startAmount = g.startAmount > 0 ? g.startAmount : (equity > 0 ? equity : 10000);
+      return GoalCalc.calculateStepUpGoal({ startAmount, steps }).totalTrades;
+    }
+    return tradesToGoal(equity, g.target, g.profitPct || 10) || 0;
+  };
+
   viewEl.querySelectorAll("[data-goalpct]").forEach(inp=>inp.addEventListener("input",()=>{
     const v = parseFloat(inp.value);
-    if(v > 0){
-      const g = state.goals.find(x => x.id === inp.dataset.goalpct);
-      if(g){
-        g.profitPct = v;
-        save();
-        renderGoal();
-        const escId = window.CSS && CSS.escape ? CSS.escape(g.id) : g.id;
-        const again = viewEl.querySelector(`[data-goalpct="${escId}"]`);
-        if(again){
-          again.focus();
-          again.setSelectionRange(again.value.length, again.value.length);
-        }
-      }
+    const g = state.goals.find(x => x.id === inp.dataset.goalpct);
+    if(g && v > 0 && v !== g.profitPct){
+      g.profitPct = v;
+      save();
+      rerenderGoalKeepingInput("data-goalpct", g.id, inp.value);
     }
   }));
 
@@ -958,29 +992,21 @@ function renderGoal(){
     inp.addEventListener("input", () => {
       const v = parseFloat(inp.value);
       const g = state.goals.find(x => x.id === inp.dataset.goaltradedays);
-      if(g){
-        if(v > 0){
-          g.tradeDays = v;
-        }
+      if(g && v > 0){
+        const next = normalizeTradeDays(v);
+        if(next === g.tradeDays) return;   // e.g. "1" -> "1." : nothing changed yet
+        g.tradeDays = next;
         save();
-        renderGoal();
-        const escId = window.CSS && CSS.escape ? CSS.escape(g.id) : g.id;
-        const again = viewEl.querySelector(`[data-goaltradedays="${escId}"]`);
-        if(again){
-          again.focus();
-          again.setSelectionRange(again.value.length, again.value.length);
-        }
+        rerenderGoalKeepingInput("data-goaltradedays", g.id, inp.value);
       }
     });
+    // On blur/enter, an empty or invalid value falls back to the ledger average.
     inp.addEventListener("change", () => {
-      if(inp.value.trim() === ""){
-        const g = state.goals.find(x => x.id === inp.dataset.goaltradedays);
-        if(g){
-          g.tradeDays = null;
-          save();
-          renderGoal();
-        }
-      }
+      const g = state.goals.find(x => x.id === inp.dataset.goaltradedays);
+      if(!g || parseFloat(inp.value) > 0) return;
+      g.tradeDays = null;
+      save();
+      renderGoal();
     });
   });
 
@@ -989,35 +1015,22 @@ function renderGoal(){
       const v = parseFloat(inp.value);
       const g = state.goals.find(x => x.id === inp.dataset.goalestdays);
       if(g && v > 0){
-        let totalTrades;
-        if(g.type === "stepup"){
-          const steps = Array.isArray(g.steps) && g.steps.length ? g.steps : [{ target: g.target || 15000, profitPct: g.profitPct || 10 }];
-          const startAmount = g.startAmount > 0 ? g.startAmount : (equity > 0 ? equity : 10000);
-          const calc = GoalCalc.calculateStepUpGoal({ startAmount, steps });
-          totalTrades = calc.totalTrades;
-        } else {
-          totalTrades = tradesToGoal(equity, g.target, g.profitPct || 10) || 1;
-        }
-        g.tradeDays = totalTrades > 0 ? Math.round((v / totalTrades) * 100) / 100 : v;
+        const totalTrades = goalTotalTrades(g);
+        if(!(totalTrades > 0)) return;
+        // full precision so trades × days gives back exactly what was typed
+        const next = normalizeTradeDays(v / totalTrades);
+        if(next === g.tradeDays) return;
+        g.tradeDays = next;
         save();
-        renderGoal();
-        const escId = window.CSS && CSS.escape ? CSS.escape(g.id) : g.id;
-        const again = viewEl.querySelector(`[data-goalestdays="${escId}"]`);
-        if(again){
-          again.focus();
-          again.setSelectionRange(again.value.length, again.value.length);
-        }
+        rerenderGoalKeepingInput("data-goalestdays", g.id, inp.value);
       }
     });
     inp.addEventListener("change", () => {
-      if(inp.value.trim() === ""){
-        const g = state.goals.find(x => x.id === inp.dataset.goalestdays);
-        if(g){
-          g.tradeDays = null;
-          save();
-          renderGoal();
-        }
-      }
+      const g = state.goals.find(x => x.id === inp.dataset.goalestdays);
+      if(!g || parseFloat(inp.value) > 0) return;
+      g.tradeDays = null;
+      save();
+      renderGoal();
     });
   });
 
@@ -2021,7 +2034,9 @@ function renderLedger(){
   const combineSells = state.ui.combineSells !== false;
   state.ui.expandedGroups = state.ui.expandedGroups || {};
 
-  const { realizedByTxn, inRangeGroups, analytics } = LE.computeClosedTradesAndAnalytics(state.transactions, R, state.assets);
+  const { realizedByTxn, holdingMsByTxn, inRangeGroups, analytics } = LE.computeClosedTradesAndAnalytics(state.transactions, R, state.assets);
+  const holdTag = (ms, title, size) => ms > 0
+    ? `<span class="tag" style="font-size:${size || 9.5}px;margin-left:2px" title="${title}">⏱ ${formatDurationDays(ms / 86400000)}</span>` : '';
   const a = analytics;
   const hasTrades = a.totalClosedTrades > 0;
   const winRateColor = !hasTrades ? 'neu' : (a.winRatePct >= 50 ? 'pos' : 'neg');
@@ -2156,7 +2171,7 @@ function renderLedger(){
               const itRet = it.basisSold > 0 ? (itPl / it.basisSold * 100) : 0;
               return `<tr class="trade-subrow">
                 <td style="padding-left:22px"><small class="muted">↳ ${fmtDate(it.date)}</small></td>
-                <td><span class="tag" style="font-size:9px;opacity:.85">fill ${idx+1}/${grp.items.length}</span></td>
+                <td><span class="tag" style="font-size:9px;opacity:.85">fill ${idx+1}/${grp.items.length}</span>${holdTag(it.holdingTimeMs, "Holding duration of this fill", 9)}</td>
                 <td style="text-align:left">
                   ${fmtNum(it.qty)} ${sym} @ ${fmtPrice(it.price)}${it.fee ? ` · fee ${fmtUSD(it.fee)}` : ''}
                   ${t.note ? ` <small class="muted">— ${esc(t.note)}</small>` : ''}
@@ -2196,7 +2211,7 @@ function renderLedger(){
       const pl = (t.type==="SELL" && realizedByTxn[t.id]!=null) ? realizedByTxn[t.id] : null;
       return `<tr>
         <td><small class="muted">${fmtDate(t.date)}</small></td>
-        <td><span class="tag ${esc(t.type)}">${esc(t.type)}</span></td>
+        <td><span class="tag ${esc(t.type)}">${esc(t.type)}</span>${t.type==="SELL" ? holdTag(holdingMsByTxn[t.id], "Holding duration") : ''}</td>
         <td style="text-align:left">${detail}${t.note && showNote?` <small class="muted">— ${esc(t.note)}</small>`:''}</td>
         <td class="${amount==null?'muted':cls(amount)}">${amount==null?'—':sign(amount)+fmtUSD(amount)}</td>
         <td class="${pl==null?'muted':cls(pl)}">${pl==null?'—':arrow(pl)+fmtUSD(Math.abs(pl))}</td>
@@ -2304,7 +2319,7 @@ function renderLedger(){
         <div class="card">
           <div class="label">Avg Time / Profitable Trade</div>
           <div class="value" style="font-size:18px">${a.avgHoldingTimeProfitableDays != null ? formatDurationDays(a.avgHoldingTimeProfitableDays) : '—'}</div>
-          <div class="sub muted">${a.winTrades > 0 ? `avg duration across ${a.winTrades} win${a.winTrades===1?'':'s'} · used in Goals` : 'no winning trades yet'}</div>
+          <div class="sub muted">${a.winTrades > 0 ? `avg duration across ${a.winTrades} win${a.winTrades===1?'':'s'}${R.isAll ? ' · used in Goals' : ` · Goals use all-time (${formatDurationDays(getLedgerAvgProfitableTradeDays())})`}` : 'no winning trades yet'}</div>
         </div>
       </div>
     </div>
